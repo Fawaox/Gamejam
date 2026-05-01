@@ -2,6 +2,11 @@ package Game
 
 import k2 "../karl2d"
 
+WINDOW_WIDTH :: 1280
+WINDOW_HEIGHT :: 720
+
+Vec2 :: k2.Vec2
+
 main :: proc()
 {
 	init()
@@ -11,7 +16,9 @@ main :: proc()
 
 init :: proc()
 {
-	k2.init(1280, 720, "Game!")
+	k2.init(WINDOW_WIDTH, WINDOW_HEIGHT, "Game!")
+
+	InitGameState(&gameState)
 }
 
 step :: proc() -> bool
@@ -25,12 +32,12 @@ step :: proc() -> bool
     defer k2.present()
 
     // Drawing
-    k2.draw_text("Hellope!", {50, 50}, 100, TEST_COLOR)
+    k2.draw_text("Hellope!", {50, 50}, 100, k2.WHITE)
+
+    k2.draw_circle(gameState.player.position, 32.0, k2.WHITE)
 
 	return true
 }
-
-TEST_COLOR :: k2.Color{20, 20, 20, 255}
 
 shutdown :: proc()
 {
@@ -42,7 +49,14 @@ GameState :: struct
 	player: Player
 }
 
+gameState: GameState
+
+InitGameState :: proc(gameState: ^GameState)
+{
+	gameState.player.position = Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
+}
+
 Player :: struct
 {
-	position: k2.Vec2
+	position: Vec2
 }
