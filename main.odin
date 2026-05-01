@@ -1,6 +1,6 @@
 package Game
 
-import k2 "../karl2d"
+import k2 "karl2d"
 
 main :: proc()
 {
