@@ -1,5 +1,7 @@
 package Game
 
+import "core:math"
+
 import k2 "../karl2d"
 
 WINDOW_WIDTH :: 1280
@@ -40,7 +42,7 @@ HandleMovement :: proc()
     	gameState.player.position.x += 250 * k2.get_frame_time()
     }
 }
-
+angle: f32
 step :: proc() -> bool
 {
 	if !k2.update()
@@ -48,15 +50,25 @@ step :: proc() -> bool
         return false
     }
 
-    HandleMovement()
+    //HandleMovement()
+    gameState.player.position = k2.get_mouse_position()
 
     k2.clear(k2.LIGHT_BLUE)
     defer k2.present()
 
     // Drawing
-    k2.draw_text("Hellope!", {50, 50}, 100, k2.WHITE)
 
-    k2.draw_circle(gameState.player.position, 32.0, k2.WHITE)
+    // Tower
+    k2.draw_circle(k2.get_window_scale() * Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}, 32.0, k2.RED)
+
+    middle:=k2.get_window_scale() *Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
+
+    dir: Vec2 = k2.get_mouse_position() - middle
+    angle: f32 = math.atan2(dir.y, dir.x)
+
+    k2.draw_circle(Vec2{middle.x + math.cos(angle)*256, middle.y + math.sin(angle)*256}, 32.0, k2.WHITE)
+
+    //k2.draw_circle(gameState.player.position, 32.0, k2.WHITE)
 
 	return true
 }
