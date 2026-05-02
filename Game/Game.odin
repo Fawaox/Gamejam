@@ -40,6 +40,7 @@ sounds: Sounds
 // Structs
 Textures :: struct {
 	crosshair: k2.Texture,
+	jeep: k2.Texture,
 	car:       k2.Texture,
 	bullet:    k2.Texture,
 }
@@ -82,6 +83,7 @@ LoadTextures :: proc() {
 	textures.crosshair = k2.load_texture_from_bytes(#load("../assets/crosshair.png"))
 	textures.car = k2.load_texture_from_bytes(#load("../assets/Car_1_Gray.png"))
 	textures.bullet = k2.load_texture_from_bytes(#load("../assets/Pistol-Bullet.png"))
+	textures.jeep = k2.load_texture_from_bytes(#load("../assets/Jeep.png"))
 }
 
 LoadSounds :: proc() {
@@ -172,6 +174,11 @@ DrawPlayer :: proc() {
 		{PLAYER_VEHICLE_WIDTH / 2, PLAYER_VEHICLE_HEIGHT / 2},
 		-player_angle,
 	)
+	// Draw Car, doesn't work yet!
+	src := k2.get_texture_rect(textures.jeep)
+	dst := k2.Rect{player_position.x, player_position.y, src.w * 4, src.h * 4}
+	k2.draw_texture_fit(textures.jeep, src, dst, rotation = 60)
+
 	k2.draw_circle(player_position, 32.0, k2.Color{7, 47, 132, 255})
 	k2.draw_circle(GetPlayerMuzzlePosition(), 4.0, k2.Color{7, 47, 132, 255})
 }
