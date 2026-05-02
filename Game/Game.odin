@@ -15,12 +15,9 @@ ENEMY_SPAWN_INTERVAL_SECONDS :: 0.1
 ENEMY_SPEED :: 7
 ENEMY_RADIUS :: 6
 
-PROJECTILE_RADIUS :: 2
-PROJECTILE_SPEED :: 500
-PROJECTILE_LIFETIME_SECONDS :: 3 // TODO destroy projectiles after a while.
-
-MAX_BULLETS :: 128
+BULLET_RADIUS :: 5
 BULLET_SPEED :: 400
+BULLET_LIFETIME_SECONDS :: 3 // TODO destroy bullets after a while.
 
 Vec2 :: k2.Vec2
 
@@ -32,8 +29,8 @@ textures: Textures
 // Structs
 Textures :: struct {
 	crosshair: k2.Texture,
-	car:    k2.Texture,
-	bullet: k2.Texture,
+	car:       k2.Texture,
+	bullet:    k2.Texture,
 }
 
 Player :: struct {
@@ -41,13 +38,6 @@ Player :: struct {
 	roatation: f32,
 	bodyRect:  k2.Rect, // use this as pos?? rename to sprite?
 	gunAngle:  f32,
-}
-
-Bullet :: struct {
-	position: Vec2,
-	rotation: f32,
-	velocity: Vec2,
-	age:      f32, // 0 is unused (free), 1 - 255 alive and after 255 it will die (= 0).
 }
 
 // TODO: from b2 example. maybe remove/put in gameState?
@@ -87,11 +77,6 @@ InitGameState :: proc() {
 
 	gameState.player.bodyRect = k2.Rect{640 - 50, 360 - 75, 100, 150}
 
-	for i in 0 ..< MAX_BULLETS {
-		gameState.bullets[i].position =
-			k2.get_window_scale() * Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
-	}
-
 	// Terrible hack: allocate big buffer, so pointers never change. Otherwise, if we reallocate
 	// the dynamic array, would invalidate all the pointers in box2d userdata.
 	gameState.entities = make([dynamic]Entity, 0, 10000)
@@ -115,16 +100,18 @@ UpdatePlayer :: proc() {
 	gameState.player.bodyRect.y = gameState.player.position.y
 
 	direction: Vec2 = k2.get_mouse_position() - gameState.player.position
-	len := linalg.length(direction)
-	unit := direction
-	if len > 0 do unit /= len
 
 	if k2.mouse_button_went_down(.Left) {
-		gameState.bullets[gameState.bulletCounter].position = gameState.player.position
-		gameState.bullets[gameState.bulletCounter].velocity = unit
-		gameState.bullets[gameState.bulletCounter].rotation = math.atan2(direction.y, direction.x)
-		gameState.bullets[gameState.bulletCounter].age = 1
-		gameState.bulletCounter += 1
+		direction_normalized := linalg.normalize0(direction)
+		if direction != {0, 0} { 	// Dir == 0,0 happens if you click exaclty on the player position.
+			velocity := direction * BULLET_SPEED
+			append(&gameState.entities, create_bullet(GetPlayerMuzzlePosition(), velocity))
+			b2.Body_SetUserData(
+				gameState.entities[len(gameState.entities) - 1].body_id,
+				cast(rawptr)&gameState.entities[len(gameState.entities) - 1],
+			)
+			// TODO do something like `rotation = math.atan2(direction.y, direction.x)`, so we have a rotation for drawing.
+		}
 	}
 
 	gameState.player.gunAngle = math.atan2(direction.y, direction.x)
@@ -133,48 +120,25 @@ UpdatePlayer :: proc() {
 DrawPlayer :: proc() {
 	k2.draw_rect(gameState.player.bodyRect, k2.BLUE)
 	k2.draw_circle(gameState.player.position, 32.0, k2.GREEN)
-	k2.draw_circle(
-		Vec2 {
-			gameState.player.position.x + math.cos(gameState.player.gunAngle) * 32,
-			gameState.player.position.y + math.sin(gameState.player.gunAngle) * 32,
-		},
-		4.0,
-		k2.WHITE,
-	)
+	k2.draw_circle(GetPlayerMuzzlePosition(), 4.0, k2.WHITE)
 }
 
-DrawCrosshair :: proc()
-{
+GetPlayerMuzzlePosition :: proc() -> Vec2 {
+	return Vec2 {
+		gameState.player.position.x + math.cos(gameState.player.gunAngle) * 32,
+		gameState.player.position.y + math.sin(gameState.player.gunAngle) * 32,
+	}
+}
+
+DrawCrosshair :: proc() {
 	src := k2.get_texture_rect(textures.crosshair)
-	dst := k2.Rect{
-    x = k2.get_mouse_position().x-256/8,
-    y = k2.get_mouse_position().y-256/8,
-    w = src.w/8,
-    h = src.h/8,
+	dst := k2.Rect {
+		x = k2.get_mouse_position().x - 256 / 8,
+		y = k2.get_mouse_position().y - 256 / 8,
+		w = src.w / 8,
+		h = src.h / 8,
 	}
 	k2.draw_texture_fit(textures.crosshair, src, dst)
-}
-
-UpdateBullets :: proc() {
-	for bullet in 0 ..< MAX_BULLETS {
-		if gameState.bullets[bullet].age > 0 {
-			gameState.bullets[bullet].position.x +=
-				gameState.bullets[bullet].velocity.x * BULLET_SPEED * k2.get_frame_time()
-			gameState.bullets[bullet].position.y +=
-				gameState.bullets[bullet].velocity.y * BULLET_SPEED * k2.get_frame_time()
-
-			gameState.bullets[bullet].age += 0.5
-			if gameState.bullets[bullet].age == 255 do gameState.bullets[bullet].age = 0
-		}
-	}
-}
-
-DrawBullets :: proc() {
-	for bullet in 0 ..< MAX_BULLETS {
-		if gameState.bullets[bullet].age > 0 {
-			k2.draw_circle(gameState.bullets[bullet].position, 16.0, k2.RED)
-		}
-	}
 }
 
 step :: proc() -> bool {
@@ -184,18 +148,6 @@ step :: proc() -> bool {
 
 	dt := k2.get_frame_time()
 	time_acc += dt
-
-	if k2.mouse_button_went_down(.Right) {
-		target_position := k2.get_mouse_position()
-		player_position := gameState.player.position
-		direction := linalg.normalize0(target_position - player_position)
-		velocity := direction * PROJECTILE_SPEED
-		append(&gameState.entities, create_projectile(gameState.player.position, velocity))
-		b2.Body_SetUserData(
-			gameState.entities[len(gameState.entities) - 1].body_id,
-			cast(rawptr)&gameState.entities[len(gameState.entities) - 1],
-		)
-	}
 
 	enemity_count: i32
 	// Move enemies towards the target and count enemies
@@ -207,6 +159,8 @@ step :: proc() -> bool {
 			)
 			b2.Body_SetLinearVelocity(entity.body_id, direction * ENEMY_SPEED)
 			enemity_count += 1
+		} else if entity.type == .Bullet {
+			// TODO handle bullet lifetime here, destroy when too old.
 		}
 	}
 
@@ -249,8 +203,8 @@ step :: proc() -> bool {
 				dataB := b2.Body_GetUserData(bodyB)
 				entityA := cast(^Entity)dataA
 				entityB := cast(^Entity)dataB
-				if entityA.type == .Projectile && entityB.type == .Enemy {
-					fmt.println("Hit event between projectile and enemy, at time: ", k2.get_time())
+				if entityA.type == .Bullet && entityB.type == .Enemy {
+					fmt.println("Hit event between bullet and enemy, at time: ", k2.get_time())
 					destroy_entity(entityA)
 					destroy_entity(entityB)
 				}
@@ -259,14 +213,12 @@ step :: proc() -> bool {
 	}
 
 	UpdatePlayer()
-	UpdateBullets()
 
 	k2.clear(k2.LIGHT_BLUE)
 	defer k2.present()
 
 	// Drawing
 	DrawPlayer()
-	DrawBullets()
 	DrawCrosshair()
 
 	for entity in gameState.entities {
@@ -275,13 +227,13 @@ step :: proc() -> bool {
 			k2.draw_circle(
 				b2_position_to_k2_position(b2.Body_GetPosition(entity.body_id)),
 				ENEMY_RADIUS,
-				k2.RED,
+				k2.DARK_GRAY,
 			)
-		case .Projectile:
+		case .Bullet:
 			k2.draw_circle(
 				b2_position_to_k2_position(b2.Body_GetPosition(entity.body_id)),
-				PROJECTILE_RADIUS,
-				k2.GRAY,
+				BULLET_RADIUS,
+				k2.RED,
 			)
 		}
 	}
@@ -315,7 +267,7 @@ create_enemy :: proc() -> Entity {
 	return Entity{.Enemy, body_id}
 }
 
-create_projectile :: proc(position: Vec2, velocity: Vec2) -> Entity {
+create_bullet :: proc(position: Vec2, velocity: Vec2) -> Entity {
 	body_def := b2.DefaultBodyDef()
 	body_def.type = .kinematicBody
 	body_def.position = k2_position_to_b2_position(position)
@@ -330,10 +282,10 @@ create_projectile :: proc(position: Vec2, velocity: Vec2) -> Entity {
 	shape_def.enableHitEvents = true
 
 	circle: b2.Circle
-	circle.radius = PROJECTILE_RADIUS
+	circle.radius = BULLET_RADIUS
 	_ = b2.CreateCircleShape(body_id, shape_def, circle)
 
-	return Entity{.Projectile, body_id}
+	return Entity{.Bullet, body_id}
 }
 
 destroy_entity :: proc(entity_ptr: ^Entity) {
@@ -359,15 +311,13 @@ b2_position_to_k2_position :: proc(position: b2.Vec2) -> b2.Vec2 {
 
 GameState :: struct {
 	player:                Player,
-	bullets:               [MAX_BULLETS]Bullet,
-	bulletCounter:         i32,
 	entities:              [dynamic]Entity,
 	last_enemy_spawn_time: f64,
 }
 
 Entity_Type :: enum {
 	Enemy,
-	Projectile,
+	Bullet,
 }
 
 Entity :: struct {
