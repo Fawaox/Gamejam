@@ -10,6 +10,9 @@ import b2 "vendor:box2d"
 WINDOW_WIDTH :: 1280
 WINDOW_HEIGHT :: 720
 
+PHYICS_SUB_STEPS :: 4
+PHYSICS_TIME_STEP :: 1.0 / 60
+
 NUM_MAX_ENEMIES :: 30
 ENEMY_SPAWN_INTERVAL_SECONDS :: 0.1
 ENEMY_SPEED :: 7
@@ -30,8 +33,9 @@ PLAYER_VEHICLE_COLOR_SLIGHTLY_DARKER :: k2.Color{183, 46, 46, 255}
 PLAYER_GUN_RADIUS :: 16
 PLAYER_MAX_HEALTH :: 100
 PLAYER_FORWARD_FORCE :: 100000000000 // TODO tweak numbers
-PLAYER_BACKWARD_FORCE :: 70000000000
-PLAYER_ROTATION_FORCE :: 600000000000
+PLAYER_BACKWARD_FORCE :: 90000000000
+PLAYER_ROTATION_FORCE :: 3000000000000
+PLAYER_GRIP_STRENGTH :: 1000000000
 
 Vec2 :: k2.Vec2
 
@@ -112,6 +116,43 @@ InitGameState :: proc() {
 	gameState.player = &gameState.entities[len(gameState.entities) - 1]
 }
 
+GetLongitudinalVelocity :: proc(body_id: b2.BodyId) -> b2.Vec2 {
+	vel := b2.Body_GetLinearVelocity(gameState.player.body_id)
+	right := b2.Body_GetWorldVector(gameState.player.body_id, b2.Vec2{0, 1})
+	lateral_speed := linalg.dot(vel, right)
+	lateral_vel := right * lateral_speed
+	return lateral_vel
+}
+
+GetLateralVelocity :: proc(body_id: b2.BodyId) -> b2.Vec2 {
+	vel := b2.Body_GetLinearVelocity(gameState.player.body_id)
+	right := b2.Body_GetWorldVector(gameState.player.body_id, b2.Vec2{1, 0})
+	lateral_speed := linalg.dot(vel, right)
+	lateral_vel := right * lateral_speed
+	return lateral_vel
+}
+
+UpdatePlayerPhysics :: proc() {
+	if gameState.player == nil {
+		return
+	}
+
+	local_force_vector := k2.Vec2{0, gameState.player_foward_force * PHYSICS_TIME_STEP}
+	rot := b2.Body_GetRotation(gameState.player.body_id)
+	world_force_vector := b2.RotateVector(rot, local_force_vector)
+	b2.Body_ApplyForceToCenter(gameState.player.body_id, world_force_vector, true)
+	b2.Body_ApplyTorque(
+		gameState.player.body_id,
+		gameState.player_torque * PHYSICS_TIME_STEP,
+		true,
+	)
+
+	lateral_vel := GetLateralVelocity(gameState.player.body_id)
+	grip_strength: f32 = PLAYER_GRIP_STRENGTH
+	force := lateral_vel * -grip_strength
+	b2.Body_ApplyForceToCenter(gameState.player.body_id, force, true)
+}
+
 UpdatePlayer :: proc() {
 	if gameState.player == nil {
 		return
@@ -126,24 +167,26 @@ UpdatePlayer :: proc() {
 	player_foward_force: f32
 	player_torque: f32
 	if k2.key_is_held(k2.Keyboard_Key.W) {
-		player_foward_force += PLAYER_FORWARD_FORCE * k2.get_frame_time()
+		player_foward_force += PLAYER_FORWARD_FORCE
 	}
 	if k2.key_is_held(k2.Keyboard_Key.S) {
-		player_foward_force -= PLAYER_BACKWARD_FORCE * k2.get_frame_time()
+		player_foward_force -= PLAYER_BACKWARD_FORCE
 	}
 	if k2.key_is_held(k2.Keyboard_Key.A) {
-		player_torque += PLAYER_ROTATION_FORCE * k2.get_frame_time()
+		player_torque += PLAYER_ROTATION_FORCE
 	}
 	if k2.key_is_held(k2.Keyboard_Key.D) {
-		player_torque -= PLAYER_ROTATION_FORCE * k2.get_frame_time()
+		player_torque -= PLAYER_ROTATION_FORCE
 	}
 
-	local_force_vector := k2.Vec2{0, player_foward_force}
-	rot := b2.Body_GetRotation(gameState.player.body_id)
-	world_force_vector := b2.RotateVector(rot, local_force_vector)
+	// Rotate the other way, if we're tryomg to go backwards.
+	if player_foward_force < 0 {
+		player_torque *= -1
+	}
 
-	b2.Body_ApplyForceToCenter(gameState.player.body_id, world_force_vector, true)
-	b2.Body_ApplyTorque(gameState.player.body_id, player_torque, true)
+	gameState.player_foward_force = player_foward_force
+	gameState.player_torque = player_torque
+
 
 	player_position := b2.Body_GetPosition(gameState.player.body_id)
 
@@ -196,6 +239,21 @@ DrawPlayer :: proc() {
 	k2.draw_circle(player_position, PLAYER_GUN_RADIUS, PLAYER_VEHICLE_COLOR_SLIGHTLY_DARKER)
 	k2.draw_circle(player_position, PLAYER_GUN_RADIUS * 0.9, PLAYER_VEHICLE_COLOR)
 	k2.draw_circle(GetPlayerMuzzlePosition(), 4.0, PLAYER_VEHICLE_COLOR_SLIGHTLY_DARKER)
+
+	// Some debug drawing.
+	// k2.draw_line(
+	// 	player_position,
+	// 	player_position +
+	// 	b2_position_to_k2_position(GetLongitudinalVelocity(gameState.player.body_id)),
+	// 	2,
+	// 	k2.YELLOW,
+	// )
+	// k2.draw_line(
+	// 	player_position,
+	// 	player_position + b2_position_to_k2_position(GetLateralVelocity(gameState.player.body_id)),
+	// 	2,
+	// 	k2.BLUE,
+	// )
 }
 
 DrawHUD :: proc() {
@@ -213,6 +271,9 @@ DrawHUD :: proc() {
 			},
 			k2.DARK_RED,
 		)
+		vel := b2.Body_GetLinearVelocity(gameState.player.body_id)
+		speed := linalg.length(vel)
+		k2.draw_text(fmt.tprintf("Speed: %0.0f", speed), {0, window_size.y - 30}, 30, k2.WHITE)
 	} else {
 		k2.draw_text("Game Over!", window_size / 2, 48, k2.LIGHT_RED)
 		k2.draw_text("Press R to restart.", window_size / 2 + {0, 50}, 16, k2.LIGHT_RED)
@@ -274,6 +335,8 @@ step :: proc() -> bool {
 					b2_player_position - b2.Body_GetPosition(entity.body_id),
 				)
 				b2.Body_SetLinearVelocity(entity.body_id, direction * ENEMY_SPEED)
+			} else {
+				b2.Body_SetLinearVelocity(entity.body_id, 0)
 			}
 		} else if entity.type == .Bullet {
 			// TODO handle bullet lifetime here, destroy when too old.
@@ -293,12 +356,11 @@ step :: proc() -> bool {
 
 	pos := k2.get_mouse_position()
 
-	SUB_STEPS :: 4
-	TIME_STEP :: 1.0 / 60
+	for time_acc >= PHYSICS_TIME_STEP {
+		b2.World_Step(world_id, PHYSICS_TIME_STEP, PHYICS_SUB_STEPS)
+		time_acc -= PHYSICS_TIME_STEP
 
-	for time_acc >= TIME_STEP {
-		b2.World_Step(world_id, TIME_STEP, SUB_STEPS)
-		time_acc -= TIME_STEP
+		UpdatePlayerPhysics()
 
 		// TODO react to events here. Having a problem with figuring out the speed of hit events, atm.
 		contactEvents := b2.World_GetContactEvents(world_id)
@@ -463,6 +525,7 @@ create_player :: proc(position: Vec2) -> Entity {
 	body_def := b2.DefaultBodyDef()
 	body_def.type = .dynamicBody
 	body_def.position = k2_position_to_b2_position(position)
+	body_def.angularDamping = 0.8
 	body_id := b2.CreateBody(world_id, body_def)
 
 	shape_def := b2.DefaultShapeDef()
@@ -532,6 +595,8 @@ GameState :: struct {
 	player:                ^Entity,
 	entities:              [dynamic]Entity,
 	last_enemy_spawn_time: f64,
+	player_foward_force:   f32,
+	player_torque:         f32,
 }
 
 Entity_Type :: enum {
