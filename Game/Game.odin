@@ -28,12 +28,22 @@ Vec2 :: k2.Vec2
 screenCenter: Vec2
 gameState: GameState
 textures: Textures
+sounds: Sounds
 
 // Structs
 Textures :: struct {
 	crosshair: k2.Texture,
 	car:    k2.Texture,
 	bullet: k2.Texture,
+}
+
+Sounds :: struct
+{
+	buffShoot_1: k2.Audio_Buffer,
+	buffShoot_2: k2.Audio_Buffer,
+
+	Shoot_1: k2.Sound,
+	Shoot_2: k2.Sound,
 }
 
 Player :: struct {
@@ -73,6 +83,7 @@ init :: proc() {
 	screenCenter = k2.get_window_scale() * Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2} // wait maybe remove getwindowscale here and only do when drawing
 
 	LoadTextures()
+	LoadSounds()
 	InitGameState()
 }
 
@@ -80,6 +91,15 @@ LoadTextures :: proc() {
 	textures.crosshair = k2.load_texture_from_bytes(#load("../assets/crosshair.png"))
 	textures.car = k2.load_texture_from_bytes(#load("../assets/Car_1_Gray.png"))
 	textures.bullet = k2.load_texture_from_bytes(#load("../assets/Pistol-Bullet.png"))
+}
+
+LoadSounds :: proc()
+{
+	sounds.buffShoot_1 = k2.load_audio_buffer_from_bytes(#load("../assets/laserShoot_1.wav"))
+	sounds.buffShoot_2 = k2.load_audio_buffer_from_bytes(#load("../assets/laserShoot_2.wav"))
+
+	sounds.Shoot_1 = k2.create_sound_from_audio_buffer(sounds.buffShoot_1)
+	sounds.Shoot_2 = k2.create_sound_from_audio_buffer(sounds.buffShoot_2)
 }
 
 InitGameState :: proc() {
@@ -120,6 +140,7 @@ UpdatePlayer :: proc() {
 	if len > 0 do unit /= len
 
 	if k2.mouse_button_went_down(.Left) {
+		k2.play_sound(sounds.Shoot_2)
 		gameState.bullets[gameState.bulletCounter].position = gameState.player.position
 		gameState.bullets[gameState.bulletCounter].velocity = unit
 		gameState.bullets[gameState.bulletCounter].rotation = math.atan2(direction.y, direction.x)
@@ -186,6 +207,7 @@ step :: proc() -> bool {
 	time_acc += dt
 
 	if k2.mouse_button_went_down(.Right) {
+		k2.play_sound(sounds.Shoot_1)
 		target_position := k2.get_mouse_position()
 		player_position := gameState.player.position
 		direction := linalg.normalize0(target_position - player_position)
