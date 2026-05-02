@@ -1,15 +1,52 @@
 package Game
 
 import "core:math"
+import "core:math/linalg"
 
 import k2 "../karl2d"
 
 WINDOW_WIDTH :: 1280
 WINDOW_HEIGHT :: 720
 
-MAX_PROJECTILES :: 32
+MAX_BULLETS :: 128
+BULLET_SPEED :: 400
 
 Vec2 :: k2.Vec2
+
+// Global Variables
+screenCenter: Vec2
+gameState: GameState
+textures: Textures
+
+// Structs
+Textures :: struct
+{
+	car: k2.Texture,
+	bullet: k2.Texture,
+}
+
+GameState :: struct
+{
+	player: Player,
+	bullets: [MAX_BULLETS]Bullet,
+	bulletCounter: i32,
+}
+
+Player :: struct
+{
+	position: Vec2,
+	roatation: f32,
+	bodyRect: k2.Rect, // use this as pos?? rename to sprite?
+	gunAngle: f32,
+}
+
+Bullet :: struct
+{
+	position: Vec2,
+	rotation: f32,
+	velocity: Vec2,
+	age: f32, // 0 is unused (free), 1 - 255 alive and after 255 it will die (= 0).
+}
 
 main :: proc()
 {
@@ -17,27 +54,36 @@ main :: proc()
 	for step() {}
 	shutdown()
 }
-car: k2.Texture
 
-bulletTex: k2.Texture
 init :: proc()
 {
 	k2.init(WINDOW_WIDTH, WINDOW_HEIGHT, "Game!")
 
-	car = k2.load_texture_from_bytes(#load("../assets/Car_1_Gray.png"))
-	bulletTex = k2.load_texture_from_bytes(#load("../assets/Pistol-Bullet.png"))
+	screenCenter = k2.get_window_scale() * Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2} // wait maybe remove getwindowscale here and only do when drawing
 
-
-	InitGameState(&gameState)
-
-	for i in 0..<MAX_PROJECTILES
-	{
-		gameState.projectiles[i].position = k2.get_window_scale() *Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
-	}
-	//projectile.position = k2.get_window_scale() *Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
+	LoadTextures()
+	InitGameState()
 }
 
-HandlePlayerMovement :: proc()
+LoadTextures :: proc()
+{
+	textures.car = k2.load_texture_from_bytes(#load("../assets/Car_1_Gray.png"))
+	textures.bullet = k2.load_texture_from_bytes(#load("../assets/Pistol-Bullet.png"))
+}
+
+InitGameState :: proc()
+{
+	gameState.player.position =  k2.get_window_scale() * Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
+
+	gameState.player.bodyRect = k2.Rect{640-50,360-75,100,150}
+
+	for i in 0..<MAX_BULLETS
+	{
+		gameState.bullets[i].position = k2.get_window_scale() *Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
+	}
+}
+
+UpdatePlayer :: proc()
 {
 	if k2.key_is_held(k2.Keyboard_Key.W)
     {
@@ -55,9 +101,60 @@ HandlePlayerMovement :: proc()
     {
     	gameState.player.position.x += 250 * k2.get_frame_time()
     }
+
+    gameState.player.bodyRect.x = gameState.player.position.x
+    gameState.player.bodyRect.y = gameState.player.position.y
+
+    direction: Vec2 = k2.get_mouse_position() - gameState.player.position
+   	len := linalg.length(direction)
+    unit := direction
+    if len > 0 do unit /= len
+
+    if k2.mouse_button_went_down(.Left)
+    {
+    	gameState.bullets[gameState.bulletCounter].position = gameState.player.position
+    	gameState.bullets[gameState.bulletCounter].velocity = unit
+     	gameState.bullets[gameState.bulletCounter].rotation = math.atan2(direction.y, direction.x)
+     	gameState.bullets[gameState.bulletCounter].age = 1
+     	gameState.bulletCounter += 1
+    }
+
+    gameState.player.gunAngle = math.atan2(direction.y, direction.x)
 }
-angle: f32
-bulletCounter: i32 = 0
+
+DrawPlayer :: proc()
+{
+	k2.draw_rect(gameState.player.bodyRect, k2.BLUE)
+	k2.draw_circle(gameState.player.position, 32.0, k2.GREEN)
+    k2.draw_circle(Vec2{gameState.player.position.x + math.cos(gameState.player.gunAngle) * 32, gameState.player.position.y + math.sin(gameState.player.gunAngle) * 32}, 4.0, k2.WHITE)
+}
+
+UpdateBullets :: proc()
+{
+	for bullet in 0..<MAX_BULLETS
+	{
+		if gameState.bullets[bullet].age > 0
+		{
+			gameState.bullets[bullet].position.x += gameState.bullets[bullet].velocity.x * BULLET_SPEED * k2.get_frame_time()
+			gameState.bullets[bullet].position.y += gameState.bullets[bullet].velocity.y * BULLET_SPEED * k2.get_frame_time()
+
+			gameState.bullets[bullet].age += 0.5
+			if gameState.bullets[bullet].age == 255 do gameState.bullets[bullet].age = 0
+		}
+	}
+}
+
+DrawBullets :: proc()
+{
+	for bullet in 0..<MAX_BULLETS
+	{
+		if gameState.bullets[bullet].age > 0
+		{
+			k2.draw_circle(gameState.bullets[bullet].position, 16.0, k2.RED)
+		}
+	}
+}
+
 step :: proc() -> bool
 {
 	if !k2.update()
@@ -65,80 +162,15 @@ step :: proc() -> bool
         return false
     }
 
-    HandlePlayerMovement()
-    //gameState.player.position = k2.get_mouse_position()
+    UpdatePlayer()
+    UpdateBullets()
 
     k2.clear(k2.LIGHT_BLUE)
     defer k2.present()
 
     // Drawing
-
-
-
-    middle:=k2.get_window_scale() *Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
-
-    dir: Vec2 = k2.get_mouse_position() - middle
-    angle: f32 = math.atan2(dir.y, dir.x)
-
-
-
-
-    len := math.sqrt(dir.x*dir.x + dir.y*dir.y) // same as vector2length in raylib
-
-    unit := dir
-    if len > 0 {
-        unit /= len
-    }
-
-    speed: f32 = 300.0
-
-    src := k2.get_texture_rect(bulletTex)
-
-    if k2.mouse_button_went_down(.Left)
-    {
-    	gameState.projectiles[bulletCounter].velocity = unit
-     	gameState.projectiles[bulletCounter].alive = true
-     	bulletCounter += 1
-    }
-
-    gameState.player.body.x = gameState.player.position.x
-    gameState.player.body.y = gameState.player.position.y
-    k2.draw_rect(gameState.player.body, k2.BLUE )
-
-    for bullet in 0..<MAX_PROJECTILES
-    {
-    	if gameState.projectiles[bullet].alive
-     	{
-      gameState.projectiles[bullet].position.x += gameState.projectiles[bullet].velocity.x * speed * k2.get_frame_time()
-	    gameState.projectiles[bullet].position.y += gameState.projectiles[bullet].velocity.y * speed * k2.get_frame_time()
-
-	    k2.draw_circle(gameState.projectiles[bullet].position, 16.0, k2.RED)
-			//k2.draw_texture(bulletTex,gameState.projectiles[bullet].position)
-			dst := k2.Rect {
-			    x = gameState.projectiles[bullet].position.x,
-			    y = gameState.projectiles[bullet].position.y,
-			    w = src.w*5,
-			    h = src.h*5,
-			}
-			k2.draw_texture_fit(bulletTex, src, dst,rotation=angle)
-      }
-
-    }
-    src = k2.get_texture_rect(car)
-    dst := k2.Rect {
-			    x = gameState.player.position.x,
-			    y = gameState.player.position.y,
-			    w = src.w*5,
-			    h = src.h*5,
-			}
-			k2.draw_texture_fit(car, src, dst)
-    // Tower
-    k2.draw_circle(k2.get_window_scale() * Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}, 32.0, k2.GREEN)
-    k2.draw_circle(Vec2{middle.x + math.cos(angle)*32, middle.y + math.sin(angle)*32}, 4.0, k2.WHITE)
-
-
-
-    //k2.draw_circle(gameState.player.position, 32.0, k2.WHITE)
+    DrawPlayer()
+    DrawBullets()
 
 	return true
 }
@@ -146,32 +178,4 @@ step :: proc() -> bool
 shutdown :: proc()
 {
 
-}
-
-Projectile :: struct
-{
-	position: Vec2,
-	velocity: Vec2,
-	alive: bool, // maybe this u8 and age and the at age 255 it dies?
-}
-
-GameState :: struct
-{
-	player: Player,
-	projectiles: [MAX_PROJECTILES]Projectile
-}
-
-gameState: GameState
-
-InitGameState :: proc(gameState: ^GameState)
-{
-	gameState.player.position = k2.get_window_scale() * Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
-
-	gameState.player.body = k2.Rect{640*k2.get_window_scale()-50,k2.get_window_scale()*360-75,100,150}
-}
-
-Player :: struct
-{
-	position: Vec2,
-	body: k2.Rect,
 }
