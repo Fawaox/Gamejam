@@ -22,8 +22,12 @@ BULLET_SPEED :: 400
 BULLET_LIFETIME_SECONDS :: 3 // TODO destroy bullets after a while.
 BULLET_DAMAGE :: 101 // Yeah, this might have been pointless. Made zombies have health. In case we want them to take more than 1 shot.
 
-PLAYER_VEHICLE_WIDTH :: 100
-PLAYER_VEHICLE_HEIGHT :: 150
+// Jeep textue is 94 * 50
+PLAYER_VEHICLE_WIDTH :: 50 * 1.3
+PLAYER_VEHICLE_HEIGHT :: 94 * 1.3
+PLAYER_VEHICLE_COLOR :: k2.Color{223, 86, 86, 255} // Color from jeep.png
+PLAYER_VEHICLE_COLOR_SLIGHTLY_DARKER :: k2.Color{183, 46, 46, 255}
+PLAYER_GUN_RADIUS :: 16
 PLAYER_MAX_HEALTH :: 100
 PLAYER_FORWARD_FORCE :: 100000000000 // TODO tweak numbers
 PLAYER_BACKWARD_FORCE :: 70000000000
@@ -40,7 +44,7 @@ sounds: Sounds
 // Structs
 Textures :: struct {
 	crosshair: k2.Texture,
-	jeep: k2.Texture,
+	jeep:      k2.Texture,
 	car:       k2.Texture,
 	bullet:    k2.Texture,
 }
@@ -168,19 +172,30 @@ DrawPlayer :: proc() {
 	player_position := b2_position_to_k2_position(b2.Body_GetPosition(gameState.player.body_id))
 	player_rotation := b2.Body_GetRotation(gameState.player.body_id)
 	player_angle := math.atan2(player_rotation.s, player_rotation.c)
-	k2.draw_rect(
-		k2.Rect{player_position.x, player_position.y, PLAYER_VEHICLE_WIDTH, PLAYER_VEHICLE_HEIGHT},
-		k2.DARK_BLUE,
+	// k2.draw_rect(
+	// 	k2.Rect{player_position.x, player_position.y, PLAYER_VEHICLE_WIDTH, PLAYER_VEHICLE_HEIGHT},
+	// 	k2.DARK_BLUE,
+	// 	{PLAYER_VEHICLE_WIDTH / 2, PLAYER_VEHICLE_HEIGHT / 2},
+	// 	-player_angle,
+	// )
+	src := k2.get_texture_rect(textures.jeep)
+	dst := k2.Rect {
+		player_position.x,
+		player_position.y,
+		PLAYER_VEHICLE_WIDTH,
+		PLAYER_VEHICLE_HEIGHT,
+	}
+	k2.draw_texture_fit(
+		textures.jeep,
+		src,
+		dst,
 		{PLAYER_VEHICLE_WIDTH / 2, PLAYER_VEHICLE_HEIGHT / 2},
 		-player_angle,
 	)
-	// Draw Car, doesn't work yet!
-	src := k2.get_texture_rect(textures.jeep)
-	dst := k2.Rect{player_position.x, player_position.y, src.w * 4, src.h * 4}
-	k2.draw_texture_fit(textures.jeep, src, dst, rotation = 60)
 
-	k2.draw_circle(player_position, 32.0, k2.Color{7, 47, 132, 255})
-	k2.draw_circle(GetPlayerMuzzlePosition(), 4.0, k2.Color{7, 47, 132, 255})
+	k2.draw_circle(player_position, PLAYER_GUN_RADIUS, PLAYER_VEHICLE_COLOR_SLIGHTLY_DARKER)
+	k2.draw_circle(player_position, PLAYER_GUN_RADIUS * 0.9, PLAYER_VEHICLE_COLOR)
+	k2.draw_circle(GetPlayerMuzzlePosition(), 4.0, PLAYER_VEHICLE_COLOR_SLIGHTLY_DARKER)
 }
 
 DrawHUD :: proc() {
@@ -211,8 +226,8 @@ GetPlayerMuzzlePosition :: proc() -> Vec2 {
 	}
 	player_position := b2_position_to_k2_position(b2.Body_GetPosition(gameState.player.body_id))
 	return Vec2 {
-		player_position.x + math.cos(gameState.player.gunAngle) * 32,
-		player_position.y + math.sin(gameState.player.gunAngle) * 32,
+		player_position.x + math.cos(gameState.player.gunAngle) * PLAYER_GUN_RADIUS,
+		player_position.y + math.sin(gameState.player.gunAngle) * PLAYER_GUN_RADIUS,
 	}
 }
 
