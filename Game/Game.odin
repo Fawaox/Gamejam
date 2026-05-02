@@ -14,13 +14,17 @@ NUM_MAX_ENEMIES :: 30
 ENEMY_SPAWN_INTERVAL_SECONDS :: 0.1
 ENEMY_SPEED :: 7
 ENEMY_RADIUS :: 6
+ENEMY_MAX_HEALTH :: 100
+ENEMY_MINIMUM_SPAWN_DISTANCE_FROM_PLAYEER :: 300
 
 BULLET_RADIUS :: 5
 BULLET_SPEED :: 400
 BULLET_LIFETIME_SECONDS :: 3 // TODO destroy bullets after a while.
+BULLET_DAMAGE :: 101 // Yeah, this might have been pointless. Made zombies have health. In case we want them to take more than 1 shot.
 
 PLAYER_VEHICLE_WIDTH :: 100
 PLAYER_VEHICLE_HEIGHT :: 150
+PLAYER_MAX_HEALTH :: 100
 PLAYER_FORWARD_FORCE :: 100000000000 // TODO tweak numbers
 PLAYER_BACKWARD_FORCE :: 70000000000
 PLAYER_ROTATION_FORCE :: 600000000000
@@ -89,6 +93,10 @@ LoadSounds :: proc() {
 }
 
 InitGameState :: proc() {
+	// Terrible hack: allocate big buffer, so pointers never change. Otherwise, if we reallocate
+	// the dynamic array, would invalidate all the pointers in box2d userdata.
+	gameState.entities = make([dynamic]Entity, 0, 10000)
+
 	player_position := k2.get_window_scale() * Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
 	append(&gameState.entities, create_player(player_position))
 	b2.Body_SetUserData(
@@ -96,15 +104,17 @@ InitGameState :: proc() {
 		cast(rawptr)&gameState.entities[len(gameState.entities) - 1],
 	)
 	gameState.player = &gameState.entities[len(gameState.entities) - 1]
-
-	// Terrible hack: allocate big buffer, so pointers never change. Otherwise, if we reallocate
-	// the dynamic array, would invalidate all the pointers in box2d userdata.
-	gameState.entities = make([dynamic]Entity, 0, 10000)
 }
 
 UpdatePlayer :: proc() {
 	if gameState.player == nil {
 		return
+	}
+
+	// For testing: Do lots of damage to the player.
+	if k2.key_went_down(k2.Keyboard_Key.K) {
+		DamagePlayer(9999999999)
+		return // Player will have died, can't update.
 	}
 
 	player_foward_force: f32
@@ -158,12 +168,33 @@ DrawPlayer :: proc() {
 	player_angle := math.atan2(player_rotation.s, player_rotation.c)
 	k2.draw_rect(
 		k2.Rect{player_position.x, player_position.y, PLAYER_VEHICLE_WIDTH, PLAYER_VEHICLE_HEIGHT},
-		k2.BLUE,
+		k2.DARK_BLUE,
 		{PLAYER_VEHICLE_WIDTH / 2, PLAYER_VEHICLE_HEIGHT / 2},
 		-player_angle,
 	)
-	k2.draw_circle(player_position, 32.0, k2.GREEN)
-	k2.draw_circle(GetPlayerMuzzlePosition(), 4.0, k2.WHITE)
+	k2.draw_circle(player_position, 32.0, k2.Color{7, 47, 132, 255})
+	k2.draw_circle(GetPlayerMuzzlePosition(), 4.0, k2.Color{7, 47, 132, 255})
+}
+
+DrawHUD :: proc() {
+	window_size := k2.get_window_scale() * Vec2{WINDOW_WIDTH, WINDOW_HEIGHT}
+	if gameState.player != nil {
+		max_width: f32 = 400
+		x := window_size.x / 2 - max_width / 2
+		k2.draw_rect(k2.Rect{x, 40, max_width, 45}, k2.BLACK)
+		k2.draw_rect(
+			k2.Rect {
+				x,
+				40,
+				max_width * (gameState.player.currentHealth / gameState.player.maxHealth),
+				45,
+			},
+			k2.DARK_RED,
+		)
+	} else {
+		k2.draw_text("Game Over!", window_size / 2, 48, k2.LIGHT_RED)
+		k2.draw_text("Press R to restart.", window_size / 2 + {0, 50}, 16, k2.LIGHT_RED)
+	}
 }
 
 GetPlayerMuzzlePosition :: proc() -> Vec2 {
@@ -197,17 +228,30 @@ step :: proc() -> bool {
 	dt := k2.get_frame_time()
 	time_acc += dt
 
-	enemity_count: i32
+	// Game over. Handle restarting.
+	if gameState.player == nil {
+		if k2.key_went_down(k2.Keyboard_Key.R) {
+			// TODO have proper delete everything procedure.
+			// Would make sense to call that in shutdown, too. Or maybe just call shutdown here?
+			for &entity in gameState.entities {
+				destroy_entity(&entity)
+			}
+			delete(gameState.entities)
+			InitGameState()
+		}
+	}
+
+	enemy_count: i32
 	// Move enemies towards the target and count enemies
 	for &entity in gameState.entities {
 		if entity.type == .Enemy {
+			enemy_count += 1
 			if gameState.player != nil {
 				b2_player_position := b2.Body_GetPosition(gameState.player.body_id)
 				direction := linalg.normalize0(
 					b2_player_position - b2.Body_GetPosition(entity.body_id),
 				)
 				b2.Body_SetLinearVelocity(entity.body_id, direction * ENEMY_SPEED)
-				enemity_count += 1
 			}
 		} else if entity.type == .Bullet {
 			// TODO handle bullet lifetime here, destroy when too old.
@@ -215,7 +259,7 @@ step :: proc() -> bool {
 	}
 
 	// Spawn new enemies, based on time, at random positions
-	if enemity_count < NUM_MAX_ENEMIES &&
+	if enemy_count < NUM_MAX_ENEMIES &&
 	   gameState.last_enemy_spawn_time + ENEMY_SPAWN_INTERVAL_SECONDS <= k2.get_time() {
 		append(&gameState.entities, create_enemy())
 		b2.Body_SetUserData(
@@ -256,6 +300,18 @@ step :: proc() -> bool {
 				if entityA.type == .Bullet && entityB.type == .Enemy {
 					fmt.println("Hit event between bullet and enemy, at time: ", k2.get_time())
 					destroy_entity(entityA)
+					on_bullet_hits_enemy(entityB)
+				} else if entityA.type == .Enemy && entityB.type == .Bullet {
+					fmt.println("Hit event between bullet and enemy, at time: ", k2.get_time())
+					on_bullet_hits_enemy(entityA)
+					destroy_entity(entityB)
+				} else if entityA.type == .Enemy && entityB.type == .Player {
+					fmt.println("Hit event between player and enemy, at time: ", k2.get_time())
+					DamagePlayer(7)
+					destroy_entity(entityA)
+				} else if entityA.type == .Player && entityB.type == .Enemy {
+					fmt.println("Hit event between player and enemy, at time: ", k2.get_time())
+					DamagePlayer(7)
 					destroy_entity(entityB)
 				}
 			}
@@ -264,7 +320,7 @@ step :: proc() -> bool {
 
 	UpdatePlayer()
 
-	k2.clear(k2.LIGHT_BLUE)
+	k2.clear(k2.GREEN)
 	defer k2.present()
 
 	// Drawing
@@ -307,6 +363,8 @@ step :: proc() -> bool {
 		}
 	}
 
+	DrawHUD()
+
 	return true
 }
 
@@ -317,10 +375,27 @@ shutdown :: proc() {
 create_enemy :: proc() -> Entity {
 	x := rand.float32_range(0, WINDOW_WIDTH) // TODO set sense making range
 	y := rand.float32_range(0, WINDOW_HEIGHT) // TODO set sense making range
+	random_position := Vec2{x, y}
+
+	// Avoid spawning too close to the player. Attempts is used to avoid an endless loop.
+	if gameState.player != nil {
+		attempts: i32 = 1000
+		player_position := k2_position_to_b2_position(
+			b2.Body_GetPosition(gameState.player.body_id),
+		)
+		for attempts > 0 &&
+		    linalg.length(player_position - random_position) <
+			    ENEMY_MINIMUM_SPAWN_DISTANCE_FROM_PLAYEER {
+			x = rand.float32_range(0, WINDOW_WIDTH)
+			y = rand.float32_range(0, WINDOW_HEIGHT)
+			random_position = Vec2{x, y}
+			attempts -= 1
+		}
+	}
 
 	body_def := b2.DefaultBodyDef()
 	body_def.type = .dynamicBody
-	body_def.position = k2_position_to_b2_position(Vec2{x, y})
+	body_def.position = k2_position_to_b2_position(random_position)
 	body_id := b2.CreateBody(world_id, body_def)
 
 	shape_def := b2.DefaultShapeDef()
@@ -333,7 +408,12 @@ create_enemy :: proc() -> Entity {
 	circle.radius = ENEMY_RADIUS
 	_ = b2.CreateCircleShape(body_id, shape_def, circle)
 
-	return Entity{type = .Enemy, body_id = body_id}
+	return Entity {
+		type = .Enemy,
+		body_id = body_id,
+		maxHealth = ENEMY_MAX_HEALTH,
+		currentHealth = ENEMY_MAX_HEALTH,
+	}
 }
 
 create_bullet :: proc(position: Vec2, velocity: Vec2) -> Entity {
@@ -364,7 +444,7 @@ create_player :: proc(position: Vec2) -> Entity {
 	body_id := b2.CreateBody(world_id, body_def)
 
 	shape_def := b2.DefaultShapeDef()
-	shape_def.density = 1000
+	shape_def.density = 10000
 	shape_def.material.friction = 0.3
 	shape_def.enableContactEvents = true
 	shape_def.enableHitEvents = true
@@ -372,19 +452,49 @@ create_player :: proc(position: Vec2) -> Entity {
 	box := b2.MakeBox(PLAYER_VEHICLE_WIDTH / 2, PLAYER_VEHICLE_HEIGHT / 2)
 	_ = b2.CreatePolygonShape(body_id, shape_def, box)
 
-	return Entity{type = .Player, body_id = body_id}
+	return Entity {
+		type = .Player,
+		body_id = body_id,
+		maxHealth = PLAYER_MAX_HEALTH,
+		currentHealth = PLAYER_MAX_HEALTH,
+	}
 }
 
 destroy_entity :: proc(entity_ptr: ^Entity) {
+	assert(entity_ptr != nil)
+	fmt.println("Destroying entity. Type: ", entity_ptr.type)
 	for &entity, i in gameState.entities {
 		if &entity == entity_ptr {
 			b2.DestroyBody(entity.body_id)
 			unordered_remove(&gameState.entities, i)
+			fmt.println("Found the entity and removed it from the array.")
 		}
 	}
 	// TODO: recreating all the userdata pointers whenever we destroy an entity. very silly, should use some kind of stable ID system.
 	for &entity in gameState.entities {
 		b2.Body_SetUserData(entity.body_id, cast(rawptr)&entity)
+	}
+}
+
+on_bullet_hits_enemy :: proc(entity_ptr: ^Entity) {
+	assert(entity_ptr != nil && entity_ptr.type == .Enemy)
+	entity_ptr.currentHealth -= BULLET_DAMAGE
+	if entity_ptr.currentHealth <= 0 {
+		destroy_entity(entity_ptr)
+	}
+}
+
+DamagePlayer :: proc(damage: f32) {
+	assert(gameState.player != nil)
+	gameState.player.currentHealth = math.clamp(
+		gameState.player.currentHealth - damage,
+		0,
+		gameState.player.maxHealth,
+	)
+	if gameState.player.currentHealth <= 0 {
+		fmt.println("Destroying player entity.")
+		destroy_entity(gameState.player)
+		gameState.player = nil
 	}
 }
 
@@ -409,8 +519,11 @@ Entity_Type :: enum {
 }
 
 Entity :: struct {
-	type:     Entity_Type,
-	body_id:  b2.BodyId,
+	type:          Entity_Type,
+	body_id:       b2.BodyId,
 	//Player data:
-	gunAngle: f32,
+	gunAngle:      f32,
+	//Player and zombie:
+	maxHealth:     f32,
+	currentHealth: f32,
 }
