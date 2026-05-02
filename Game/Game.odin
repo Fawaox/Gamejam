@@ -10,7 +10,7 @@ import b2 "vendor:box2d"
 WINDOW_WIDTH :: 1280
 WINDOW_HEIGHT :: 720
 
-NUM_MAX_ENEMIES :: 50
+NUM_MAX_ENEMIES :: 30
 ENEMY_SPAWN_INTERVAL_SECONDS :: 0.1
 ENEMY_SPEED :: 7
 ENEMY_RADIUS :: 6
@@ -18,6 +18,12 @@ ENEMY_RADIUS :: 6
 BULLET_RADIUS :: 5
 BULLET_SPEED :: 400
 BULLET_LIFETIME_SECONDS :: 3 // TODO destroy bullets after a while.
+
+PLAYER_VEHICLE_WIDTH :: 100
+PLAYER_VEHICLE_HEIGHT :: 150
+PLAYER_FORWARD_FORCE :: 100000000000 // TODO tweak numbers
+PLAYER_BACKWARD_FORCE :: 70000000000
+PLAYER_ROTATION_FORCE :: 600000000000
 
 Vec2 :: k2.Vec2
 
@@ -41,13 +47,6 @@ Sounds :: struct {
 	Shoot_2:     k2.Sound,
 }
 
-Player :: struct {
-	position:  Vec2,
-	roatation: f32,
-	bodyRect:  k2.Rect, // use this as pos?? rename to sprite?
-	gunAngle:  f32,
-}
-
 // TODO: from b2 example. maybe remove/put in gameState?
 world_id: b2.WorldId
 time_acc: f32
@@ -63,7 +62,7 @@ init :: proc() {
 
 	k2.set_cursor_visible(false)
 
-	b2.SetLengthUnitsPerMeter(4) // TODO does this make sense?
+	b2.SetLengthUnitsPerMeter(1) // TODO does this make sense?
 	world_def := b2.DefaultWorldDef()
 	world_def.gravity = b2.Vec2{0, 0}
 	world_id = b2.CreateWorld(world_def)
@@ -90,9 +89,13 @@ LoadSounds :: proc() {
 }
 
 InitGameState :: proc() {
-	gameState.player.position = k2.get_window_scale() * Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
-
-	gameState.player.bodyRect = k2.Rect{640 - 50, 360 - 75, 100, 150}
+	player_position := k2.get_window_scale() * Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
+	append(&gameState.entities, create_player(player_position))
+	b2.Body_SetUserData(
+		gameState.entities[len(gameState.entities) - 1].body_id,
+		cast(rawptr)&gameState.entities[len(gameState.entities) - 1],
+	)
+	gameState.player = &gameState.entities[len(gameState.entities) - 1]
 
 	// Terrible hack: allocate big buffer, so pointers never change. Otherwise, if we reallocate
 	// the dynamic array, would invalidate all the pointers in box2d userdata.
@@ -100,23 +103,35 @@ InitGameState :: proc() {
 }
 
 UpdatePlayer :: proc() {
+	if gameState.player == nil {
+		return
+	}
+
+	player_foward_force: f32
+	player_torque: f32
 	if k2.key_is_held(k2.Keyboard_Key.W) {
-		gameState.player.position.y -= 250 * k2.get_frame_time()
+		player_foward_force += PLAYER_FORWARD_FORCE * k2.get_frame_time()
 	}
 	if k2.key_is_held(k2.Keyboard_Key.S) {
-		gameState.player.position.y += 250 * k2.get_frame_time()
+		player_foward_force -= PLAYER_BACKWARD_FORCE * k2.get_frame_time()
 	}
 	if k2.key_is_held(k2.Keyboard_Key.A) {
-		gameState.player.position.x -= 250 * k2.get_frame_time()
+		player_torque += PLAYER_ROTATION_FORCE * k2.get_frame_time()
 	}
 	if k2.key_is_held(k2.Keyboard_Key.D) {
-		gameState.player.position.x += 250 * k2.get_frame_time()
+		player_torque -= PLAYER_ROTATION_FORCE * k2.get_frame_time()
 	}
 
-	gameState.player.bodyRect.x = gameState.player.position.x
-	gameState.player.bodyRect.y = gameState.player.position.y
+	local_force_vector := k2.Vec2{0, player_foward_force}
+	rot := b2.Body_GetRotation(gameState.player.body_id)
+	world_force_vector := b2.RotateVector(rot, local_force_vector)
 
-	direction: Vec2 = k2.get_mouse_position() - gameState.player.position
+	b2.Body_ApplyForceToCenter(gameState.player.body_id, world_force_vector, true)
+	b2.Body_ApplyTorque(gameState.player.body_id, player_torque, true)
+
+	player_position := b2.Body_GetPosition(gameState.player.body_id)
+
+	direction: Vec2 = k2.get_mouse_position() - b2_position_to_k2_position(player_position)
 
 	if k2.mouse_button_went_down(.Left) {
 		direction_normalized := linalg.normalize0(direction)
@@ -128,7 +143,6 @@ UpdatePlayer :: proc() {
 				gameState.entities[len(gameState.entities) - 1].body_id,
 				cast(rawptr)&gameState.entities[len(gameState.entities) - 1],
 			)
-			// TODO do something like `rotation = math.atan2(direction.y, direction.x)`, so we have a rotation for drawing.
 		}
 	}
 
@@ -136,15 +150,31 @@ UpdatePlayer :: proc() {
 }
 
 DrawPlayer :: proc() {
-	k2.draw_rect(gameState.player.bodyRect, k2.BLUE)
-	k2.draw_circle(gameState.player.position, 32.0, k2.GREEN)
+	if gameState.player == nil {
+		return
+	}
+	player_position := b2_position_to_k2_position(b2.Body_GetPosition(gameState.player.body_id))
+	player_rotation := b2.Body_GetRotation(gameState.player.body_id)
+	player_angle := math.atan2(player_rotation.s, player_rotation.c)
+	k2.draw_rect(
+		k2.Rect{player_position.x, player_position.y, PLAYER_VEHICLE_WIDTH, PLAYER_VEHICLE_HEIGHT},
+		k2.BLUE,
+		{PLAYER_VEHICLE_WIDTH / 2, PLAYER_VEHICLE_HEIGHT / 2},
+		-player_angle,
+	)
+	k2.draw_circle(player_position, 32.0, k2.GREEN)
 	k2.draw_circle(GetPlayerMuzzlePosition(), 4.0, k2.WHITE)
 }
 
 GetPlayerMuzzlePosition :: proc() -> Vec2 {
+	assert(gameState.player != nil) // we should not be calling this if the player is nil.
+	if gameState.player == nil {
+		return {0, 0}
+	}
+	player_position := b2_position_to_k2_position(b2.Body_GetPosition(gameState.player.body_id))
 	return Vec2 {
-		gameState.player.position.x + math.cos(gameState.player.gunAngle) * 32,
-		gameState.player.position.y + math.sin(gameState.player.gunAngle) * 32,
+		player_position.x + math.cos(gameState.player.gunAngle) * 32,
+		player_position.y + math.sin(gameState.player.gunAngle) * 32,
 	}
 }
 
@@ -171,12 +201,14 @@ step :: proc() -> bool {
 	// Move enemies towards the target and count enemies
 	for &entity in gameState.entities {
 		if entity.type == .Enemy {
-			b2_player_position := b2_position_to_k2_position(gameState.player.position)
-			direction := linalg.normalize0(
-				b2_player_position - b2.Body_GetPosition(entity.body_id),
-			)
-			b2.Body_SetLinearVelocity(entity.body_id, direction * ENEMY_SPEED)
-			enemity_count += 1
+			if gameState.player != nil {
+				b2_player_position := b2.Body_GetPosition(gameState.player.body_id)
+				direction := linalg.normalize0(
+					b2_player_position - b2.Body_GetPosition(entity.body_id),
+				)
+				b2.Body_SetLinearVelocity(entity.body_id, direction * ENEMY_SPEED)
+				enemity_count += 1
+			}
 		} else if entity.type == .Bullet {
 			// TODO handle bullet lifetime here, destroy when too old.
 		}
@@ -253,6 +285,25 @@ step :: proc() -> bool {
 				BULLET_RADIUS,
 				k2.RED,
 			)
+		case .Player:
+		//player is handled separately.
+		}
+
+		// Draw contact points. For debugging.
+		{
+			contactData: [100]b2.ContactData
+			contactDataSlice := b2.Body_GetContactData(entity.body_id, contactData[:])
+			for i in 0 ..< len(contactDataSlice) {
+				for j in 0 ..< contactDataSlice[i].manifold.pointCount {
+					point := contactDataSlice[i].manifold.points[j]
+					b2_location := k2_position_to_b2_position(point.point)
+					k2.draw_circle(
+						b2_position_to_k2_position(b2.Body_GetPosition(entity.body_id)),
+						1,
+						k2.YELLOW,
+					)
+				}
+			}
 		}
 	}
 
@@ -282,7 +333,7 @@ create_enemy :: proc() -> Entity {
 	circle.radius = ENEMY_RADIUS
 	_ = b2.CreateCircleShape(body_id, shape_def, circle)
 
-	return Entity{.Enemy, body_id}
+	return Entity{type = .Enemy, body_id = body_id}
 }
 
 create_bullet :: proc(position: Vec2, velocity: Vec2) -> Entity {
@@ -303,7 +354,25 @@ create_bullet :: proc(position: Vec2, velocity: Vec2) -> Entity {
 	circle.radius = BULLET_RADIUS
 	_ = b2.CreateCircleShape(body_id, shape_def, circle)
 
-	return Entity{.Bullet, body_id}
+	return Entity{type = .Bullet, body_id = body_id}
+}
+
+create_player :: proc(position: Vec2) -> Entity {
+	body_def := b2.DefaultBodyDef()
+	body_def.type = .dynamicBody
+	body_def.position = k2_position_to_b2_position(position)
+	body_id := b2.CreateBody(world_id, body_def)
+
+	shape_def := b2.DefaultShapeDef()
+	shape_def.density = 1000
+	shape_def.material.friction = 0.3
+	shape_def.enableContactEvents = true
+	shape_def.enableHitEvents = true
+
+	box := b2.MakeBox(PLAYER_VEHICLE_WIDTH / 2, PLAYER_VEHICLE_HEIGHT / 2)
+	_ = b2.CreatePolygonShape(body_id, shape_def, box)
+
+	return Entity{type = .Player, body_id = body_id}
 }
 
 destroy_entity :: proc(entity_ptr: ^Entity) {
@@ -328,17 +397,20 @@ b2_position_to_k2_position :: proc(position: b2.Vec2) -> b2.Vec2 {
 }
 
 GameState :: struct {
-	player:                Player,
+	player:                ^Entity,
 	entities:              [dynamic]Entity,
 	last_enemy_spawn_time: f64,
 }
 
 Entity_Type :: enum {
+	Player,
 	Enemy,
 	Bullet,
 }
 
 Entity :: struct {
-	type:    Entity_Type,
-	body_id: b2.BodyId,
+	type:     Entity_Type,
+	body_id:  b2.BodyId,
+	//Player data:
+	gunAngle: f32,
 }
