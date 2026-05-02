@@ -31,6 +31,7 @@ textures: Textures
 
 // Structs
 Textures :: struct {
+	crosshair: k2.Texture,
 	car:    k2.Texture,
 	bullet: k2.Texture,
 }
@@ -62,6 +63,8 @@ main :: proc() {
 init :: proc() {
 	k2.init(WINDOW_WIDTH, WINDOW_HEIGHT, "Game!")
 
+	k2.set_cursor_visible(false)
+
 	b2.SetLengthUnitsPerMeter(4) // TODO does this make sense?
 	world_def := b2.DefaultWorldDef()
 	world_def.gravity = b2.Vec2{0, 0}
@@ -74,6 +77,7 @@ init :: proc() {
 }
 
 LoadTextures :: proc() {
+	textures.crosshair = k2.load_texture_from_bytes(#load("../assets/crosshair.png"))
 	textures.car = k2.load_texture_from_bytes(#load("../assets/Car_1_Gray.png"))
 	textures.bullet = k2.load_texture_from_bytes(#load("../assets/Pistol-Bullet.png"))
 }
@@ -137,6 +141,18 @@ DrawPlayer :: proc() {
 		4.0,
 		k2.WHITE,
 	)
+}
+
+DrawCrosshair :: proc()
+{
+	src := k2.get_texture_rect(textures.crosshair)
+	dst := k2.Rect{
+    x = k2.get_mouse_position().x-256/8,
+    y = k2.get_mouse_position().y-256/8,
+    w = src.w/8,
+    h = src.h/8,
+	}
+	k2.draw_texture_fit(textures.crosshair, src, dst)
 }
 
 UpdateBullets :: proc() {
@@ -253,9 +269,10 @@ step :: proc() -> bool {
 	// Drawing
 	DrawPlayer()
 	DrawBullets()
+	DrawCrosshair()
 
 	k2.draw_circle(gameState.player.position, 32.0, k2.WHITE)
-	k2.draw_circle(gameState.current_enemy_target, 32.0, k2.BLUE)
+	//k2.draw_circle(gameState.current_enemy_target, 32.0, k2.BLUE)
 
 	for entity in gameState.entities {
 		switch entity.type {
