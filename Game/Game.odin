@@ -169,16 +169,12 @@ step :: proc() -> bool {
 	dt := k2.get_frame_time()
 	time_acc += dt
 
-	// Set the target. That's where the zombies walk to for now. Needs to be using the vehicle position later.
-	if k2.mouse_button_went_down(.Left) {
-		gameState.current_enemy_target = k2.get_mouse_position()
-	}
-
 	if k2.mouse_button_went_down(.Right) {
 		target_position := k2.get_mouse_position()
-		direction := linalg.normalize0(target_position - gameState.current_enemy_target)
+		player_position := gameState.player.position
+		direction := linalg.normalize0(target_position - player_position)
 		velocity := direction * PROJECTILE_SPEED
-		append(&gameState.entities, create_projectile(gameState.current_enemy_target, velocity))
+		append(&gameState.entities, create_projectile(gameState.player.position, velocity))
 		b2.Body_SetUserData(
 			gameState.entities[len(gameState.entities) - 1].body_id,
 			cast(rawptr)&gameState.entities[len(gameState.entities) - 1],
@@ -189,8 +185,10 @@ step :: proc() -> bool {
 	// Move enemies towards the target and count enemies
 	for &entity in gameState.entities {
 		if entity.type == .Enemy {
-			b2_target_pos := k2_position_to_b2_position(gameState.current_enemy_target)
-			direction := linalg.normalize0(b2_target_pos - b2.Body_GetPosition(entity.body_id))
+			b2_player_position := b2_position_to_k2_position(gameState.player.position)
+			direction := linalg.normalize0(
+				b2_player_position - b2.Body_GetPosition(entity.body_id),
+			)
 			b2.Body_SetLinearVelocity(entity.body_id, direction * ENEMY_SPEED)
 			enemity_count += 1
 		}
@@ -253,9 +251,6 @@ step :: proc() -> bool {
 	// Drawing
 	DrawPlayer()
 	DrawBullets()
-
-	k2.draw_circle(gameState.player.position, 32.0, k2.WHITE)
-	k2.draw_circle(gameState.current_enemy_target, 32.0, k2.BLUE)
 
 	for entity in gameState.entities {
 		switch entity.type {
@@ -349,7 +344,6 @@ GameState :: struct {
 	player:                Player,
 	bullets:               [MAX_BULLETS]Bullet,
 	bulletCounter:         i32,
-	current_enemy_target:  Vec2,
 	entities:              [dynamic]Entity,
 	last_enemy_spawn_time: f64,
 }
