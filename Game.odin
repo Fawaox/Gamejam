@@ -1,10 +1,10 @@
 package Game
 
-import k2 "karl2d"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:math/rand"
+import k2 "karl2d"
 import b2 "vendor:box2d"
 
 WINDOW_WIDTH :: 1280
@@ -443,6 +443,8 @@ step :: proc() -> bool {
 		return false
 	}
 
+	kill_entities()
+
 	dt := k2.get_frame_time()
 	time_acc += dt
 
@@ -838,14 +840,17 @@ create_blocking_volume :: proc(position: Vec2, size: Vec2) {
 destroy_entity :: proc(entity_ptr: ^Entity) {
 	assert(entity_ptr != nil)
 	fmt.println("Destroying entity. Type: ", entity_ptr.type)
+	entity_ptr.pendingKill = true
+}
+
+kill_entities :: proc() {
 	for &entity, i in gameState.entities {
-		if &entity == entity_ptr {
+		if entity.pendingKill {
 			b2.DestroyBody(entity.body_id)
 			unordered_remove(&gameState.entities, i)
-			fmt.println("Found the entity and removed it from the array.")
 		}
 	}
-	// TODO: recreating all the userdata pointers whenever we destroy an entity. very silly, should use some kind of stable ID system.
+	// TODO: recreating all the userdata pointers whenever we kill an entity. very silly, should use some kind of stable ID system.
 	for &entity in gameState.entities {
 		b2.Body_SetUserData(entity.body_id, cast(rawptr)&entity)
 	}
@@ -922,6 +927,7 @@ Entity_Type :: enum {
 Entity :: struct {
 	type:          Entity_Type,
 	body_id:       b2.BodyId,
+	pendingKill:   bool,
 	//Player data:
 	gunAngle:      f32,
 	//Player and zombie:
