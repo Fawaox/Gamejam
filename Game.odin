@@ -193,7 +193,8 @@ UpdatePlayerPhysics :: proc() {
 	world_force_vector := b2.RotateVector(rot, local_force_vector)
 	b2.Body_ApplyForceToCenter(gameState.player.body_id, world_force_vector, true)
 
-	speed := GetLongitudinalVelocity(gameState.player.body_id).y
+	speed :=
+		b2.Body_GetLocalVector(gameState.player.body_id, GetLongitudinalVelocity(gameState.player.body_id)).y
 	torque_factor := math.clamp(math.abs(speed) / PLAYER_TURN_IDEAL_SPEED, 0, 1)
 	b2.Body_ApplyTorque(
 		gameState.player.body_id,
@@ -395,6 +396,9 @@ DrawHUD :: proc() {
 }
 
 DrawGrid :: proc() {
+	if !DRAW_DEBUG {
+		return
+	}
 	for x := -1000; x < 1000; x += 1 {
 		k2.draw_line(
 			b2_position_to_k2_position({cast(f32)x, 0}),
