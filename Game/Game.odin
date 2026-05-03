@@ -536,23 +536,19 @@ step :: proc() -> bool {
 				entityB := cast(^Entity)dataB
 				if entityA.type == .Bullet && entityB.type == .Enemy {
 					fmt.println("Hit event between bullet and enemy, at time: ", k2.get_time())
-					destroy_entity(entityA)
-					on_bullet_hits_enemy(entityB)
+					bullet_enemy_hit(entityA, entityB)
 				} else if entityA.type == .Enemy && entityB.type == .Bullet {
 					fmt.println("Hit event between bullet and enemy, at time: ", k2.get_time())
-					on_bullet_hits_enemy(entityA)
-					destroy_entity(entityB)
+					bullet_enemy_hit(entityB, entityA)
 				} else if entityA.type == .Enemy && entityB.type == .Player {
 					if hitEvent.approachSpeed > 15 {
 						fmt.println("Hit event between player and enemy, at time: ", k2.get_time())
-						DamagePlayer(7)
-						destroy_entity(entityA)
+						player_enemy_hit(entityB, entityA)
 					}
 				} else if entityA.type == .Player && entityB.type == .Enemy {
 					if hitEvent.approachSpeed > 15 {
 						fmt.println("Hit event between player and enemy, at time: ", k2.get_time())
-						DamagePlayer(7)
-						destroy_entity(entityB)
+						player_enemy_hit(entityA, entityB)
 					}
 				} else if entityA.type == .CrateHealth && entityB.type == .Player {
 					if hitEvent.approachSpeed > 1 {
@@ -560,12 +556,7 @@ step :: proc() -> bool {
 							"Hit event between player and CrateHealth, at time: ",
 							k2.get_time(),
 						)
-						destroy_entity(entityA)
-						gameState.player.currentHealth = math.clamp(
-							gameState.player.currentHealth + CRATE_HEALTH,
-							0,
-							PLAYER_MAX_HEALTH,
-						)
+						player_crate_health_hit(entityB, entityA)
 					}
 				} else if entityA.type == .Player && entityB.type == .CrateHealth {
 					if hitEvent.approachSpeed > 1 {
@@ -573,12 +564,7 @@ step :: proc() -> bool {
 							"Hit event between player and CrateHealth, at time: ",
 							k2.get_time(),
 						)
-						destroy_entity(entityB)
-						gameState.player.currentHealth = math.clamp(
-							gameState.player.currentHealth + CRATE_HEALTH,
-							0,
-							PLAYER_MAX_HEALTH,
-						)
+						player_crate_health_hit(entityA, entityB)
 					}
 				} else if entityA.type == .CrateAmmo && entityB.type == .Player {
 					if hitEvent.approachSpeed > 1 {
@@ -586,8 +572,7 @@ step :: proc() -> bool {
 							"Hit event between player and CrateAmmo, at time: ",
 							k2.get_time(),
 						)
-						destroy_entity(entityA)
-						gameState.currentAmmo += CRATE_AMMO
+						player_crate_ammo_hit(entityB, entityA)
 					}
 				} else if entityA.type == .Player && entityB.type == .CrateAmmo {
 					if hitEvent.approachSpeed > 1 {
@@ -595,8 +580,7 @@ step :: proc() -> bool {
 							"Hit event between player and CrateAmmo, at time: ",
 							k2.get_time(),
 						)
-						destroy_entity(entityB)
-						gameState.currentAmmo += CRATE_AMMO
+						player_crate_ammo_hit(entityA, entityB)
 					}
 				} else {
 					fmt.println("Hit event being ignored, at time: ", k2.get_time())
@@ -863,12 +847,32 @@ destroy_entity :: proc(entity_ptr: ^Entity) {
 	}
 }
 
-on_bullet_hits_enemy :: proc(entity_ptr: ^Entity) {
-	assert(entity_ptr != nil && entity_ptr.type == .Enemy)
-	entity_ptr.currentHealth -= BULLET_DAMAGE
-	if entity_ptr.currentHealth <= 0 {
-		destroy_entity(entity_ptr)
+bullet_enemy_hit :: proc(bullet: ^Entity, enemy: ^Entity) {
+	assert(enemy != nil && enemy.type == .Enemy)
+	enemy.currentHealth -= BULLET_DAMAGE
+	if enemy.currentHealth <= 0 {
+		destroy_entity(enemy)
 	}
+	destroy_entity(bullet)
+}
+
+player_enemy_hit :: proc(player: ^Entity, enemy: ^Entity) {
+	DamagePlayer(7)
+	destroy_entity(enemy)
+}
+
+player_crate_health_hit :: proc(player: ^Entity, crate: ^Entity) {
+	destroy_entity(crate)
+	gameState.player.currentHealth = math.clamp(
+		gameState.player.currentHealth + CRATE_HEALTH,
+		0,
+		PLAYER_MAX_HEALTH,
+	)
+}
+
+player_crate_ammo_hit :: proc(player: ^Entity, crate: ^Entity) {
+	destroy_entity(crate)
+	gameState.currentAmmo += CRATE_AMMO
 }
 
 DamagePlayer :: proc(damage: f32) {
