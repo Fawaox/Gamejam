@@ -492,7 +492,16 @@ step :: proc() -> bool {
 		x := rand.float32_range(0, WINDOW_WIDTH) // TODO set sense making range
 		y := rand.float32_range(0, WINDOW_HEIGHT) // TODO set sense making range
 		random_position := Vec2{x, y}
-		append(&gameState.entities, create_crate_ammo(random_position))
+		make_ammo_crate := rand.int31() % 2 == 1
+		if make_ammo_crate {
+			append(&gameState.entities, create_crate_ammo(random_position))
+		} else {
+			append(&gameState.entities, create_crate_health(random_position))
+		}
+		b2.Body_SetUserData(
+			gameState.entities[len(gameState.entities) - 1].body_id,
+			cast(rawptr)&gameState.entities[len(gameState.entities) - 1],
+		)
 	}
 
 	pos := k2.get_mouse_position()
@@ -512,7 +521,7 @@ step :: proc() -> bool {
 		}
 		for i in 0 ..< contactEvents.hitCount {
 			hitEvent := contactEvents.hitEvents[i]
-			if hitEvent.approachSpeed > 5 {
+			if hitEvent.approachSpeed > 1 {
 				//fmt.println("hit event; speed:", hitEvent.approachSpeed)
 				shapeA := hitEvent.shapeIdA
 				shapeB := hitEvent.shapeIdB
@@ -534,19 +543,19 @@ step :: proc() -> bool {
 					on_bullet_hits_enemy(entityA)
 					destroy_entity(entityB)
 				} else if entityA.type == .Enemy && entityB.type == .Player {
-					if hitEvent.approachSpeed > 20 {
+					if hitEvent.approachSpeed > 15 {
 						fmt.println("Hit event between player and enemy, at time: ", k2.get_time())
 						DamagePlayer(7)
 						destroy_entity(entityA)
 					}
 				} else if entityA.type == .Player && entityB.type == .Enemy {
-					if hitEvent.approachSpeed > 20 {
+					if hitEvent.approachSpeed > 15 {
 						fmt.println("Hit event between player and enemy, at time: ", k2.get_time())
 						DamagePlayer(7)
 						destroy_entity(entityB)
 					}
 				} else if entityA.type == .CrateHealth && entityB.type == .Player {
-					if hitEvent.approachSpeed > 5 {
+					if hitEvent.approachSpeed > 1 {
 						fmt.println(
 							"Hit event between player and CrateHealth, at time: ",
 							k2.get_time(),
@@ -559,7 +568,7 @@ step :: proc() -> bool {
 						)
 					}
 				} else if entityA.type == .Player && entityB.type == .CrateHealth {
-					if hitEvent.approachSpeed > 5 {
+					if hitEvent.approachSpeed > 1 {
 						fmt.println(
 							"Hit event between player and CrateHealth, at time: ",
 							k2.get_time(),
@@ -572,7 +581,7 @@ step :: proc() -> bool {
 						)
 					}
 				} else if entityA.type == .CrateAmmo && entityB.type == .Player {
-					if hitEvent.approachSpeed > 5 {
+					if hitEvent.approachSpeed > 1 {
 						fmt.println(
 							"Hit event between player and CrateAmmo, at time: ",
 							k2.get_time(),
@@ -581,7 +590,7 @@ step :: proc() -> bool {
 						gameState.currentAmmo += CRATE_AMMO
 					}
 				} else if entityA.type == .Player && entityB.type == .CrateAmmo {
-					if hitEvent.approachSpeed > 5 {
+					if hitEvent.approachSpeed > 1 {
 						fmt.println(
 							"Hit event between player and CrateAmmo, at time: ",
 							k2.get_time(),
@@ -589,6 +598,8 @@ step :: proc() -> bool {
 						destroy_entity(entityB)
 						gameState.currentAmmo += CRATE_AMMO
 					}
+				} else {
+					fmt.println("Hit event being ignored, at time: ", k2.get_time())
 				}
 			}
 		}
@@ -777,12 +788,12 @@ create_crate_ammo :: proc(position: Vec2) -> Entity {
 	body_def.type = .dynamicBody
 	body_def.position = k2_position_to_b2_position(position)
 	body_def.angularDamping = 0.99
-	body_def.linearDamping = 0.3
+	body_def.linearDamping = 0.9
 	body_id := b2.CreateBody(world_id, body_def)
 
 	shape_def := b2.DefaultShapeDef()
-	shape_def.density = 1
-	shape_def.material.friction = 0.1
+	shape_def.density = 2
+	shape_def.material.friction = 0.9
 	shape_def.enableContactEvents = true
 	shape_def.enableHitEvents = true
 
@@ -802,12 +813,12 @@ create_crate_health :: proc(position: Vec2) -> Entity {
 	body_def.type = .dynamicBody
 	body_def.position = k2_position_to_b2_position(position)
 	body_def.angularDamping = 0.99
-	body_def.linearDamping = 0.3
+	body_def.linearDamping = 0.99
 	body_id := b2.CreateBody(world_id, body_def)
 
 	shape_def := b2.DefaultShapeDef()
-	shape_def.density = 1
-	shape_def.material.friction = 0.1
+	shape_def.density = 2
+	shape_def.material.friction = 0.9
 	shape_def.enableContactEvents = true
 	shape_def.enableHitEvents = true
 
