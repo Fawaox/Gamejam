@@ -56,6 +56,7 @@ screenCenter: Vec2
 gameState: GameState
 textures: Textures
 sounds: Sounds
+bgmBool: bool
 
 // Structs
 Textures :: struct {
@@ -68,8 +69,15 @@ Textures :: struct {
 }
 
 Sounds :: struct {
+	bgm_01: k2.Audio_Stream,
+	bgm_02: k2.Audio_Stream,
+
 	buffShoot_1: k2.Audio_Buffer,
 	buffShoot_2: k2.Audio_Buffer,
+
+	buffHit_1: k2.Audio_Buffer,
+	hit_1: k2.Sound,
+
 	Shoot_1:     k2.Sound,
 	Shoot_2:     k2.Sound,
 }
@@ -122,6 +130,7 @@ init :: proc() {
 	LoadTextures()
 	LoadSounds()
 	InitGameState()
+
 }
 
 LoadTextures :: proc() {
@@ -134,11 +143,17 @@ LoadTextures :: proc() {
 }
 
 LoadSounds :: proc() {
+	sounds.bgm_01 = k2.load_audio_stream_from_bytes(#load("assets/bgm_01.ogg"))
+	sounds.bgm_02 = k2.load_audio_stream_from_bytes(#load("assets/bgm_02.ogg"))
+
 	sounds.buffShoot_1 = k2.load_audio_buffer_from_bytes(#load("assets/laserShoot_1.wav"))
 	sounds.buffShoot_2 = k2.load_audio_buffer_from_bytes(#load("assets/laserShoot_2.wav"))
 
 	sounds.Shoot_1 = k2.create_sound_from_audio_buffer(sounds.buffShoot_1)
 	sounds.Shoot_2 = k2.create_sound_from_audio_buffer(sounds.buffShoot_2)
+
+	sounds.buffHit_1 = k2.load_audio_buffer_from_bytes(#load("assets/hit_1.wav"))
+	sounds.hit_1 = k2.create_sound_from_audio_buffer(sounds.buffHit_1)
 }
 
 InitGameState :: proc() {
@@ -156,6 +171,18 @@ InitGameState :: proc() {
 
 	gameState.gameStartTime = k2.get_time()
 	gameState.currentAmmo = PLAYER_DEFAULT_AMMO
+
+	bgmBool = (rand.uint32() & 2) == 0
+
+	if bgmBool == true
+	{
+		k2.play_audio_stream(sounds.bgm_01)
+	}
+	else
+	{
+		k2.play_audio_stream(sounds.bgm_02)
+	}
+
 }
 
 GetLongitudinalVelocity :: proc(body_id: b2.BodyId) -> b2.Vec2 {
@@ -392,6 +419,14 @@ DrawHUD :: proc() {
 	} else {
 		k2.draw_text("Game Over!", window_size / 2, 48, k2.LIGHT_RED)
 		k2.draw_text("Press R to restart.", window_size / 2 + {0, 50}, 16, k2.LIGHT_RED)
+		if bgmBool == true
+		{
+			k2.stop_audio_stream(sounds.bgm_01)
+		}
+		else
+		{
+			k2.stop_audio_stream(sounds.bgm_02)
+		}
 	}
 }
 
@@ -446,6 +481,8 @@ step :: proc() -> bool {
 	if !k2.update() {
 		return false
 	}
+	k2.update_audio_stream(sounds.bgm_01)
+	k2.update_audio_stream(sounds.bgm_02)
 
 	kill_entities()
 
@@ -865,6 +902,7 @@ bullet_enemy_hit :: proc(bullet: ^Entity, enemy: ^Entity) {
 	enemy.currentHealth -= BULLET_DAMAGE
 	if enemy.currentHealth <= 0 {
 		destroy_entity(enemy)
+		k2.play_sound(sounds.hit_1)
 	}
 	destroy_entity(bullet)
 }
