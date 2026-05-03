@@ -39,6 +39,7 @@ PLAYER_MAX_HEALTH :: 100
 PLAYER_FORWARD_FORCE :: 10000.0 // TODO tweak numbers
 PLAYER_BACKWARD_FORCE :: PLAYER_FORWARD_FORCE * 0.9
 PLAYER_ROTATION_FORCE :: 6000.0
+PLAYER_FORWARD_FORCE_DURING_TURN_FACTOR :: 0.7
 PLAYER_TURN_IDEAL_SPEED :: 5.0 // Couldn't think of a good name. At speeds below this, we will scale down the ability to turn.
 
 PLAYER_DEFAULT_AMMO :: 9
@@ -263,6 +264,9 @@ UpdatePlayer :: proc() {
 	}
 	if changing_direction {
 		player_torque = 0 // Only turn if we are already going in the desired direction.
+	}
+	if player_torque != 0 {
+		player_foward_force *= PLAYER_FORWARD_FORCE_DURING_TURN_FACTOR
 	}
 
 	gameState.player_foward_force = player_foward_force
