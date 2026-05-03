@@ -42,7 +42,10 @@ PLAYER_ROTATION_FORCE :: 6000.0
 PLAYER_TURN_IDEAL_SPEED :: 5.0 // Couldn't think of a good name. At speeds below this, we will scale down the ability to turn.
 
 PLAYER_DEFAULT_AMMO :: 9
+NUM_MAX_CRATES :: 1
 CRATE_AMMO :: 6
+CRATE_SIZE :: 20.0 / PIXELS_PER_METER
+CRATE_MAX_HEALTH :: 102
 CRATE_HEALTH :: 40
 
 Vec2 :: k2.Vec2
@@ -151,6 +154,7 @@ InitGameState :: proc() {
 	gameState.player = &gameState.entities[len(gameState.entities) - 1]
 
 	gameState.gameStartTime = k2.get_time()
+	gameState.currentAmmo = PLAYER_DEFAULT_AMMO
 }
 
 GetLongitudinalVelocity :: proc(body_id: b2.BodyId) -> b2.Vec2 {
@@ -268,7 +272,7 @@ UpdatePlayer :: proc() {
 
 	direction: Vec2 = k2.get_mouse_position() - b2_position_to_k2_position(player_position)
 
-	if k2.mouse_button_went_down(.Left) {
+	if k2.mouse_button_went_down(.Left) && gameState.currentAmmo > 0 {
 		direction_normalized := linalg.normalize0(direction)
 		if direction != {0, 0} { 	// Dir == 0,0 happens if you click exaclty on the player position.
 			k2.play_sound(sounds.Shoot_2)
@@ -278,6 +282,7 @@ UpdatePlayer :: proc() {
 				gameState.entities[len(gameState.entities) - 1].body_id,
 				cast(rawptr)&gameState.entities[len(gameState.entities) - 1],
 			)
+			gameState.currentAmmo -= 1
 		}
 	}
 
@@ -370,9 +375,10 @@ DrawHUD :: proc() {
 		speed := linalg.length(vel)
 		k2.draw_text(
 			fmt.tprintf(
-				"Speed: %0.0fkmh | Survival Time: %0.0f",
+				"Speed: %0.0fkmh | Survival Time: %0.0f | Ammo: %d",
 				speed * 3.6,
 				k2.get_time() - gameState.gameStartTime,
+				gameState.currentAmmo,
 			),
 			{0, window_size.y - 30},
 			30,
@@ -450,6 +456,7 @@ step :: proc() -> bool {
 	}
 
 	enemy_count: i32
+	crate_count: i32
 	// Move enemies towards the target and count enemies
 	for &entity in gameState.entities {
 		if entity.type == .Enemy {
@@ -465,6 +472,8 @@ step :: proc() -> bool {
 			}
 		} else if entity.type == .Bullet {
 			// TODO handle bullet lifetime here, destroy when too old.
+		} else if entity.type == .CrateAmmo || entity.type == .CrateHealth {
+			crate_count += 1
 		}
 	}
 
@@ -477,6 +486,13 @@ step :: proc() -> bool {
 			cast(rawptr)&gameState.entities[len(gameState.entities) - 1],
 		)
 		gameState.last_enemy_spawn_time = k2.get_time()
+	}
+
+	if crate_count < NUM_MAX_CRATES {
+		x := rand.float32_range(0, WINDOW_WIDTH) // TODO set sense making range
+		y := rand.float32_range(0, WINDOW_HEIGHT) // TODO set sense making range
+		random_position := Vec2{x, y}
+		append(&gameState.entities, create_crate_ammo(random_position))
 	}
 
 	pos := k2.get_mouse_position()
@@ -529,6 +545,50 @@ step :: proc() -> bool {
 						DamagePlayer(7)
 						destroy_entity(entityB)
 					}
+				} else if entityA.type == .CrateHealth && entityB.type == .Player {
+					if hitEvent.approachSpeed > 5 {
+						fmt.println(
+							"Hit event between player and CrateHealth, at time: ",
+							k2.get_time(),
+						)
+						destroy_entity(entityA)
+						gameState.player.currentHealth = math.clamp(
+							gameState.player.currentHealth + CRATE_HEALTH,
+							0,
+							PLAYER_MAX_HEALTH,
+						)
+					}
+				} else if entityA.type == .Player && entityB.type == .CrateHealth {
+					if hitEvent.approachSpeed > 5 {
+						fmt.println(
+							"Hit event between player and CrateHealth, at time: ",
+							k2.get_time(),
+						)
+						destroy_entity(entityB)
+						gameState.player.currentHealth = math.clamp(
+							gameState.player.currentHealth + CRATE_HEALTH,
+							0,
+							PLAYER_MAX_HEALTH,
+						)
+					}
+				} else if entityA.type == .CrateAmmo && entityB.type == .Player {
+					if hitEvent.approachSpeed > 5 {
+						fmt.println(
+							"Hit event between player and CrateAmmo, at time: ",
+							k2.get_time(),
+						)
+						destroy_entity(entityA)
+						gameState.currentAmmo += CRATE_AMMO
+					}
+				} else if entityA.type == .Player && entityB.type == .CrateAmmo {
+					if hitEvent.approachSpeed > 5 {
+						fmt.println(
+							"Hit event between player and CrateAmmo, at time: ",
+							k2.get_time(),
+						)
+						destroy_entity(entityB)
+						gameState.currentAmmo += CRATE_AMMO
+					}
 				}
 			}
 		}
@@ -560,6 +620,38 @@ step :: proc() -> bool {
 			)
 		case .Player:
 		//player is handled separately.
+		case .CrateAmmo:
+			src := k2.get_texture_rect(textures.crate_ammo)
+			position := b2_position_to_k2_position(b2.Body_GetPosition(entity.body_id))
+			dst := k2.Rect {
+				position.x,
+				position.y,
+				CRATE_SIZE * PIXELS_PER_METER,
+				CRATE_SIZE * PIXELS_PER_METER,
+			}
+			k2.draw_texture_fit(
+				textures.crate_ammo,
+				src,
+				dst,
+				{CRATE_SIZE * PIXELS_PER_METER / 2, CRATE_SIZE * PIXELS_PER_METER / 2},
+				0,
+			)
+		case .CrateHealth:
+			src := k2.get_texture_rect(textures.crate_health)
+			position := b2_position_to_k2_position(b2.Body_GetPosition(entity.body_id))
+			dst := k2.Rect {
+				position.x,
+				position.y,
+				CRATE_SIZE * PIXELS_PER_METER,
+				CRATE_SIZE * PIXELS_PER_METER,
+			}
+			k2.draw_texture_fit(
+				textures.crate_health,
+				src,
+				dst,
+				{CRATE_SIZE * PIXELS_PER_METER / 2, CRATE_SIZE * PIXELS_PER_METER / 2},
+				0,
+			)
 		}
 
 		// Draw contact points. For debugging.\
@@ -680,6 +772,56 @@ create_player :: proc(position: Vec2) -> Entity {
 	}
 }
 
+create_crate_ammo :: proc(position: Vec2) -> Entity {
+	body_def := b2.DefaultBodyDef()
+	body_def.type = .dynamicBody
+	body_def.position = k2_position_to_b2_position(position)
+	body_def.angularDamping = 0.99
+	body_def.linearDamping = 0.3
+	body_id := b2.CreateBody(world_id, body_def)
+
+	shape_def := b2.DefaultShapeDef()
+	shape_def.density = 1
+	shape_def.material.friction = 0.1
+	shape_def.enableContactEvents = true
+	shape_def.enableHitEvents = true
+
+	box := b2.MakeBox(CRATE_SIZE / 2, CRATE_SIZE / 2)
+	_ = b2.CreatePolygonShape(body_id, shape_def, box)
+
+	return Entity {
+		type = .CrateAmmo,
+		body_id = body_id,
+		maxHealth = CRATE_MAX_HEALTH,
+		currentHealth = CRATE_MAX_HEALTH,
+	}
+}
+
+create_crate_health :: proc(position: Vec2) -> Entity {
+	body_def := b2.DefaultBodyDef()
+	body_def.type = .dynamicBody
+	body_def.position = k2_position_to_b2_position(position)
+	body_def.angularDamping = 0.99
+	body_def.linearDamping = 0.3
+	body_id := b2.CreateBody(world_id, body_def)
+
+	shape_def := b2.DefaultShapeDef()
+	shape_def.density = 1
+	shape_def.material.friction = 0.1
+	shape_def.enableContactEvents = true
+	shape_def.enableHitEvents = true
+
+	box := b2.MakeBox(CRATE_SIZE / 2, CRATE_SIZE / 2)
+	_ = b2.CreatePolygonShape(body_id, shape_def, box)
+
+	return Entity {
+		type = .CrateHealth,
+		body_id = body_id,
+		maxHealth = CRATE_MAX_HEALTH,
+		currentHealth = CRATE_MAX_HEALTH,
+	}
+}
+
 create_blocking_volume :: proc(position: Vec2, size: Vec2) {
 	body_def := b2.DefaultBodyDef()
 	body_def.type = .staticBody
@@ -747,6 +889,7 @@ GameState :: struct {
 	player_foward_force:   f32,
 	player_torque:         f32,
 	gameStartTime:         f64,
+	currentAmmo:           i32,
 }
 
 Entity_Type :: enum {
@@ -754,7 +897,7 @@ Entity_Type :: enum {
 	Enemy,
 	Bullet,
 	CrateAmmo,
-	CreateHealth,
+	CrateHealth,
 }
 
 Entity :: struct {
