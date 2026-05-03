@@ -10,32 +10,40 @@ import b2 "vendor:box2d"
 WINDOW_WIDTH :: 1280
 WINDOW_HEIGHT :: 720
 
+PIXELS_PER_METER :: 30.0
+
+DRAW_DEBUG :: false
+
 PHYICS_SUB_STEPS :: 4
 PHYSICS_TIME_STEP :: 1.0 / 60
 
-NUM_MAX_ENEMIES :: 30
-ENEMY_SPAWN_INTERVAL_SECONDS :: 0.1
-ENEMY_SPEED :: 7
-ENEMY_RADIUS :: 6
+NUM_MAX_ENEMIES :: 10
+ENEMY_SPAWN_INTERVAL_SECONDS :: 0.01
+ENEMY_SPEED :: 10.0 / PIXELS_PER_METER
+ENEMY_RADIUS :: 14.0 / PIXELS_PER_METER
 ENEMY_MAX_HEALTH :: 100
-ENEMY_MINIMUM_SPAWN_DISTANCE_FROM_PLAYEER :: 300
+ENEMY_MINIMUM_SPAWN_DISTANCE_FROM_PLAYER :: 300.0 / PIXELS_PER_METER
 
-BULLET_RADIUS :: 5
-BULLET_SPEED :: 400
+BULLET_RADIUS :: 5.0 / PIXELS_PER_METER
+BULLET_SPEED :: 100.0 / PIXELS_PER_METER
 BULLET_LIFETIME_SECONDS :: 3 // TODO destroy bullets after a while.
 BULLET_DAMAGE :: 101 // Yeah, this might have been pointless. Made zombies have health. In case we want them to take more than 1 shot.
 
 // Jeep textue is 94 * 50
-PLAYER_VEHICLE_WIDTH :: 50 * 1.3
-PLAYER_VEHICLE_HEIGHT :: 94 * 1.3
+PLAYER_VEHICLE_WIDTH :: 50.0 * 1.3 / PIXELS_PER_METER
+PLAYER_VEHICLE_HEIGHT :: 94.0 * 1.3 / PIXELS_PER_METER
 PLAYER_VEHICLE_COLOR :: k2.Color{223, 86, 86, 255} // Color from jeep.png
 PLAYER_VEHICLE_COLOR_SLIGHTLY_DARKER :: k2.Color{183, 46, 46, 255}
-PLAYER_GUN_RADIUS :: 16
+PLAYER_GUN_RADIUS :: 16.0 / PIXELS_PER_METER
 PLAYER_MAX_HEALTH :: 100
-PLAYER_FORWARD_FORCE :: 100000000000 // TODO tweak numbers
-PLAYER_BACKWARD_FORCE :: 90000000000
-PLAYER_ROTATION_FORCE :: 3000000000000
-PLAYER_GRIP_STRENGTH :: 1000000000
+PLAYER_FORWARD_FORCE :: 10000.0 // TODO tweak numbers
+PLAYER_BACKWARD_FORCE :: PLAYER_FORWARD_FORCE * 0.9
+PLAYER_ROTATION_FORCE :: 6000.0
+PLAYER_TURN_IDEAL_SPEED :: 5.0 // Couldn't think of a good name. At speeds below this, we will scale down the ability to turn.
+
+PLAYER_DEFAULT_AMMO :: 9
+CRATE_AMMO :: 6
+CRATE_HEALTH :: 40
 
 Vec2 :: k2.Vec2
 
@@ -47,10 +55,12 @@ sounds: Sounds
 
 // Structs
 Textures :: struct {
-	crosshair: k2.Texture,
-	jeep:      k2.Texture,
-	car:       k2.Texture,
-	bullet:    k2.Texture,
+	crosshair:    k2.Texture,
+	jeep:         k2.Texture,
+	car:          k2.Texture,
+	bullet:       k2.Texture,
+	crate_ammo:   k2.Texture,
+	crate_health: k2.Texture,
 }
 
 Sounds :: struct {
@@ -75,12 +85,35 @@ init :: proc() {
 
 	k2.set_cursor_visible(false)
 
-	b2.SetLengthUnitsPerMeter(1) // TODO does this make sense?
+	//b2.SetLengthUnitsPerMeter(1) // TODO does this make sense?
 	world_def := b2.DefaultWorldDef()
 	world_def.gravity = b2.Vec2{0, 0}
 	world_id = b2.CreateWorld(world_def)
 
 	screenCenter = k2.get_window_scale() * Vec2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2} // wait maybe remove getwindowscale here and only do when drawing
+
+	screen_width := k2.get_window_scale() * WINDOW_WIDTH
+	screen_height := k2.get_window_scale() * WINDOW_HEIGHT
+	screen_half_width := screen_width / 2
+	screen_half_height := screen_height / 2
+	blocking_volume_thickness: f32 = 200.0
+	blocking_volume_half_thickness := blocking_volume_thickness / 2
+	create_blocking_volume(
+		{-blocking_volume_half_thickness, screen_half_height},
+		{blocking_volume_thickness, screen_height},
+	)
+	create_blocking_volume(
+		{screen_width + blocking_volume_half_thickness, screen_half_height},
+		{blocking_volume_thickness, screen_height},
+	)
+	create_blocking_volume(
+		{screen_half_width, -blocking_volume_half_thickness},
+		{screen_width, blocking_volume_thickness},
+	)
+	create_blocking_volume(
+		{screen_half_width, screen_height + blocking_volume_half_thickness},
+		{screen_width, blocking_volume_thickness},
+	)
 
 	LoadTextures()
 	LoadSounds()
@@ -92,6 +125,8 @@ LoadTextures :: proc() {
 	textures.car = k2.load_texture_from_bytes(#load("../assets/Car_1_Gray.png"))
 	textures.bullet = k2.load_texture_from_bytes(#load("../assets/Pistol-Bullet.png"))
 	textures.jeep = k2.load_texture_from_bytes(#load("../assets/Jeep.png"))
+	textures.crate_ammo = k2.load_texture_from_bytes(#load("../assets/crateWood.png"))
+	textures.crate_health = k2.load_texture_from_bytes(#load("../assets/crateWood_Health.png"))
 }
 
 LoadSounds :: proc() {
@@ -114,14 +149,20 @@ InitGameState :: proc() {
 		cast(rawptr)&gameState.entities[len(gameState.entities) - 1],
 	)
 	gameState.player = &gameState.entities[len(gameState.entities) - 1]
+
+	gameState.gameStartTime = k2.get_time()
 }
 
 GetLongitudinalVelocity :: proc(body_id: b2.BodyId) -> b2.Vec2 {
 	vel := b2.Body_GetLinearVelocity(gameState.player.body_id)
-	right := b2.Body_GetWorldVector(gameState.player.body_id, b2.Vec2{0, 1})
-	lateral_speed := linalg.dot(vel, right)
-	lateral_vel := right * lateral_speed
-	return lateral_vel
+	forward := b2.Body_GetWorldVector(gameState.player.body_id, b2.Vec2{0, 1})
+	longitudinal_speed := linalg.dot(vel, forward)
+	longitudina_vel := forward * longitudinal_speed
+	return longitudina_vel
+
+	// vel := b2.Body_GetLinearVelocity(gameState.player.body_id)
+	// local_velocity := b2.Body_GetLocalVector(gameState.player.body_id, vel)
+	// return b2.Vec2{0, local_velocity.y}
 }
 
 GetLateralVelocity :: proc(body_id: b2.BodyId) -> b2.Vec2 {
@@ -130,6 +171,10 @@ GetLateralVelocity :: proc(body_id: b2.BodyId) -> b2.Vec2 {
 	lateral_speed := linalg.dot(vel, right)
 	lateral_vel := right * lateral_speed
 	return lateral_vel
+
+	// vel := b2.Body_GetLinearVelocity(gameState.player.body_id)
+	// local_velocity := b2.Body_GetLocalVector(gameState.player.body_id, vel)
+	// return b2.Vec2{local_velocity.x, 0}
 }
 
 UpdatePlayerPhysics :: proc() {
@@ -137,20 +182,30 @@ UpdatePlayerPhysics :: proc() {
 		return
 	}
 
+	// Apply desired acceleration and turning.
 	local_force_vector := k2.Vec2{0, gameState.player_foward_force * PHYSICS_TIME_STEP}
 	rot := b2.Body_GetRotation(gameState.player.body_id)
 	world_force_vector := b2.RotateVector(rot, local_force_vector)
 	b2.Body_ApplyForceToCenter(gameState.player.body_id, world_force_vector, true)
+
+	speed := GetLongitudinalVelocity(gameState.player.body_id).y
+	torque_factor := math.clamp(math.abs(speed) / PLAYER_TURN_IDEAL_SPEED, 0, 1)
 	b2.Body_ApplyTorque(
 		gameState.player.body_id,
-		gameState.player_torque * PHYSICS_TIME_STEP,
+		gameState.player_torque * PHYSICS_TIME_STEP * torque_factor,
 		true,
 	)
 
-	lateral_vel := GetLateralVelocity(gameState.player.body_id)
-	grip_strength: f32 = PLAYER_GRIP_STRENGTH
-	force := lateral_vel * -grip_strength
-	b2.Body_ApplyForceToCenter(gameState.player.body_id, force, true)
+	// Reduce sideways sliding.
+	{
+		vel := b2.Body_GetLinearVelocity(gameState.player.body_id)
+		side_speed := b2.Body_GetLocalVector(gameState.player.body_id, vel).x
+		instant_side_accel := -side_speed / PHYSICS_TIME_STEP
+		mass := b2.Body_GetMass(gameState.player.body_id)
+		side_force := instant_side_accel * mass
+		side_direction := b2.Body_GetWorldVector(gameState.player.body_id, {1, 0})
+		b2.Body_ApplyForceToCenter(gameState.player.body_id, side_direction * side_force, true)
+	}
 }
 
 UpdatePlayer :: proc() {
@@ -164,13 +219,30 @@ UpdatePlayer :: proc() {
 		return // Player will have died, can't update.
 	}
 
+	speed :=
+		b2.Body_GetLocalVector(gameState.player.body_id, GetLongitudinalVelocity(gameState.player.body_id)).y
+	changing_direction: bool
 	player_foward_force: f32
 	player_torque: f32
 	if k2.key_is_held(k2.Keyboard_Key.W) {
+		// If we're moving backwards, we use braking force, which is higher.
+		if speed < 0 {
+			changing_direction = true
+		}
+		//player_foward_force += PLAYER_BRAKING_FORCE
+		//} else {
 		player_foward_force += PLAYER_FORWARD_FORCE
+		//}
 	}
 	if k2.key_is_held(k2.Keyboard_Key.S) {
+		// If we're moving forwards, we use braking force, which is higher.
+		if speed > 0 {
+			changing_direction = true
+		}
+		//player_foward_force -= PLAYER_BRAKING_FORCE
+		//} else {
 		player_foward_force -= PLAYER_BACKWARD_FORCE
+		//}
 	}
 	if k2.key_is_held(k2.Keyboard_Key.A) {
 		player_torque += PLAYER_ROTATION_FORCE
@@ -179,14 +251,18 @@ UpdatePlayer :: proc() {
 		player_torque -= PLAYER_ROTATION_FORCE
 	}
 
-	// Rotate the other way, if we're tryomg to go backwards.
-	if player_foward_force < 0 {
+	b2.Body_SetLinearDamping(gameState.player.body_id, changing_direction ? 0.99 : 0.3)
+
+	// Rotate the other way, if we're tryimg to go backwards.
+	if speed < 0 {
 		player_torque *= -1
+	}
+	if changing_direction {
+		player_torque = 0 // Only turn if we are already going in the desired direction.
 	}
 
 	gameState.player_foward_force = player_foward_force
 	gameState.player_torque = player_torque
-
 
 	player_position := b2.Body_GetPosition(gameState.player.body_id)
 
@@ -216,7 +292,12 @@ DrawPlayer :: proc() {
 	player_rotation := b2.Body_GetRotation(gameState.player.body_id)
 	player_angle := math.atan2(player_rotation.s, player_rotation.c)
 	// k2.draw_rect(
-	// 	k2.Rect{player_position.x, player_position.y, PLAYER_VEHICLE_WIDTH, PLAYER_VEHICLE_HEIGHT},
+	// 	k2.Rect {
+	// 		player_position.x,
+	// 		player_position.y,
+	// 		PLAYER_VEHICLE_WIDTH * PIXELS_PER_METER,
+	// 		PLAYER_VEHICLE_HEIGHT * PIXELS_PER_METER,
+	// 	},
 	// 	k2.DARK_BLUE,
 	// 	{PLAYER_VEHICLE_WIDTH / 2, PLAYER_VEHICLE_HEIGHT / 2},
 	// 	-player_angle,
@@ -225,35 +306,49 @@ DrawPlayer :: proc() {
 	dst := k2.Rect {
 		player_position.x,
 		player_position.y,
-		PLAYER_VEHICLE_WIDTH,
-		PLAYER_VEHICLE_HEIGHT,
+		PLAYER_VEHICLE_WIDTH * PIXELS_PER_METER,
+		PLAYER_VEHICLE_HEIGHT * PIXELS_PER_METER,
 	}
 	k2.draw_texture_fit(
 		textures.jeep,
 		src,
 		dst,
-		{PLAYER_VEHICLE_WIDTH / 2, PLAYER_VEHICLE_HEIGHT / 2},
+		{
+			PLAYER_VEHICLE_WIDTH * PIXELS_PER_METER / 2,
+			PLAYER_VEHICLE_HEIGHT * PIXELS_PER_METER / 2,
+		},
 		-player_angle,
 	)
 
-	k2.draw_circle(player_position, PLAYER_GUN_RADIUS, PLAYER_VEHICLE_COLOR_SLIGHTLY_DARKER)
-	k2.draw_circle(player_position, PLAYER_GUN_RADIUS * 0.9, PLAYER_VEHICLE_COLOR)
+	k2.draw_circle(
+		player_position,
+		PLAYER_GUN_RADIUS * PIXELS_PER_METER,
+		PLAYER_VEHICLE_COLOR_SLIGHTLY_DARKER,
+	)
+	k2.draw_circle(
+		player_position,
+		PLAYER_GUN_RADIUS * 0.9 * PIXELS_PER_METER,
+		PLAYER_VEHICLE_COLOR,
+	)
 	k2.draw_circle(GetPlayerMuzzlePosition(), 4.0, PLAYER_VEHICLE_COLOR_SLIGHTLY_DARKER)
 
 	// Some debug drawing.
-	// k2.draw_line(
-	// 	player_position,
-	// 	player_position +
-	// 	b2_position_to_k2_position(GetLongitudinalVelocity(gameState.player.body_id)),
-	// 	2,
-	// 	k2.YELLOW,
-	// )
-	// k2.draw_line(
-	// 	player_position,
-	// 	player_position + b2_position_to_k2_position(GetLateralVelocity(gameState.player.body_id)),
-	// 	2,
-	// 	k2.BLUE,
-	// )
+	if DRAW_DEBUG {
+		k2.draw_line(
+			player_position,
+			player_position +
+			b2_position_to_k2_position(GetLongitudinalVelocity(gameState.player.body_id)),
+			2,
+			k2.YELLOW,
+		)
+		k2.draw_line(
+			player_position,
+			player_position +
+			b2_position_to_k2_position(GetLateralVelocity(gameState.player.body_id)),
+			2,
+			k2.BLUE,
+		)
+	}
 }
 
 DrawHUD :: proc() {
@@ -273,10 +368,38 @@ DrawHUD :: proc() {
 		)
 		vel := b2.Body_GetLinearVelocity(gameState.player.body_id)
 		speed := linalg.length(vel)
-		k2.draw_text(fmt.tprintf("Speed: %0.0f", speed), {0, window_size.y - 30}, 30, k2.WHITE)
+		k2.draw_text(
+			fmt.tprintf(
+				"Speed: %0.0fkmh | Survival Time: %0.0f",
+				speed * 3.6,
+				k2.get_time() - gameState.gameStartTime,
+			),
+			{0, window_size.y - 30},
+			30,
+			k2.WHITE,
+		)
 	} else {
 		k2.draw_text("Game Over!", window_size / 2, 48, k2.LIGHT_RED)
 		k2.draw_text("Press R to restart.", window_size / 2 + {0, 50}, 16, k2.LIGHT_RED)
+	}
+}
+
+DrawGrid :: proc() {
+	for x := -1000; x < 1000; x += 1 {
+		k2.draw_line(
+			b2_position_to_k2_position({cast(f32)x, 0}),
+			b2_position_to_k2_position({cast(f32)x, -WINDOW_HEIGHT}),
+			1,
+			k2.DARK_GRAY,
+		)
+	}
+	for y := -1000; y < 1000; y += 1 {
+		k2.draw_line(
+			b2_position_to_k2_position({0, cast(f32)y}),
+			b2_position_to_k2_position({WINDOW_WIDTH, cast(f32)y}),
+			1,
+			k2.DARK_GREEN,
+		)
 	}
 }
 
@@ -287,8 +410,10 @@ GetPlayerMuzzlePosition :: proc() -> Vec2 {
 	}
 	player_position := b2_position_to_k2_position(b2.Body_GetPosition(gameState.player.body_id))
 	return Vec2 {
-		player_position.x + math.cos(gameState.player.gunAngle) * PLAYER_GUN_RADIUS,
-		player_position.y + math.sin(gameState.player.gunAngle) * PLAYER_GUN_RADIUS,
+		player_position.x +
+		math.cos(gameState.player.gunAngle) * PLAYER_GUN_RADIUS * PIXELS_PER_METER,
+		player_position.y +
+		math.sin(gameState.player.gunAngle) * PLAYER_GUN_RADIUS * PIXELS_PER_METER,
 	}
 }
 
@@ -371,7 +496,7 @@ step :: proc() -> bool {
 		}
 		for i in 0 ..< contactEvents.hitCount {
 			hitEvent := contactEvents.hitEvents[i]
-			if hitEvent.approachSpeed > 29 {
+			if hitEvent.approachSpeed > 5 {
 				//fmt.println("hit event; speed:", hitEvent.approachSpeed)
 				shapeA := hitEvent.shapeIdA
 				shapeB := hitEvent.shapeIdB
@@ -379,6 +504,9 @@ step :: proc() -> bool {
 				bodyB := b2.Shape_GetBody(shapeB)
 				dataA := b2.Body_GetUserData(bodyA)
 				dataB := b2.Body_GetUserData(bodyB)
+				if dataA == nil || dataB == nil {
+					continue // user data is nil for the blocking volumes on the outsides.
+				}
 				entityA := cast(^Entity)dataA
 				entityB := cast(^Entity)dataB
 				if entityA.type == .Bullet && entityB.type == .Enemy {
@@ -390,13 +518,17 @@ step :: proc() -> bool {
 					on_bullet_hits_enemy(entityA)
 					destroy_entity(entityB)
 				} else if entityA.type == .Enemy && entityB.type == .Player {
-					fmt.println("Hit event between player and enemy, at time: ", k2.get_time())
-					DamagePlayer(7)
-					destroy_entity(entityA)
+					if hitEvent.approachSpeed > 20 {
+						fmt.println("Hit event between player and enemy, at time: ", k2.get_time())
+						DamagePlayer(7)
+						destroy_entity(entityA)
+					}
 				} else if entityA.type == .Player && entityB.type == .Enemy {
-					fmt.println("Hit event between player and enemy, at time: ", k2.get_time())
-					DamagePlayer(7)
-					destroy_entity(entityB)
+					if hitEvent.approachSpeed > 20 {
+						fmt.println("Hit event between player and enemy, at time: ", k2.get_time())
+						DamagePlayer(7)
+						destroy_entity(entityB)
+					}
 				}
 			}
 		}
@@ -408,6 +540,7 @@ step :: proc() -> bool {
 	defer k2.present()
 
 	// Drawing
+	DrawGrid()
 	DrawPlayer()
 	DrawCrosshair()
 
@@ -416,21 +549,21 @@ step :: proc() -> bool {
 		case .Enemy:
 			k2.draw_circle(
 				b2_position_to_k2_position(b2.Body_GetPosition(entity.body_id)),
-				ENEMY_RADIUS,
+				ENEMY_RADIUS * PIXELS_PER_METER,
 				k2.DARK_GRAY,
 			)
 		case .Bullet:
 			k2.draw_circle(
 				b2_position_to_k2_position(b2.Body_GetPosition(entity.body_id)),
-				BULLET_RADIUS,
+				BULLET_RADIUS * PIXELS_PER_METER,
 				k2.RED,
 			)
 		case .Player:
 		//player is handled separately.
 		}
 
-		// Draw contact points. For debugging.
-		{
+		// Draw contact points. For debugging.\
+		if DRAW_DEBUG {
 			contactData: [100]b2.ContactData
 			contactDataSlice := b2.Body_GetContactData(entity.body_id, contactData[:])
 			for i in 0 ..< len(contactDataSlice) {
@@ -448,7 +581,7 @@ step :: proc() -> bool {
 	}
 
 	DrawHUD()
-
+	free_all(context.temp_allocator)
 	return true
 }
 
@@ -463,13 +596,13 @@ create_enemy :: proc() -> Entity {
 
 	// Avoid spawning too close to the player. Attempts is used to avoid an endless loop.
 	if gameState.player != nil {
-		attempts: i32 = 1000
-		player_position := k2_position_to_b2_position(
+		attempts: i32 = 100000
+		player_position := b2_position_to_k2_position(
 			b2.Body_GetPosition(gameState.player.body_id),
 		)
 		for attempts > 0 &&
 		    linalg.length(player_position - random_position) <
-			    ENEMY_MINIMUM_SPAWN_DISTANCE_FROM_PLAYEER {
+			    ENEMY_MINIMUM_SPAWN_DISTANCE_FROM_PLAYER * PIXELS_PER_METER {
 			x = rand.float32_range(0, WINDOW_WIDTH)
 			y = rand.float32_range(0, WINDOW_HEIGHT)
 			random_position = Vec2{x, y}
@@ -483,7 +616,7 @@ create_enemy :: proc() -> Entity {
 	body_id := b2.CreateBody(world_id, body_def)
 
 	shape_def := b2.DefaultShapeDef()
-	shape_def.density = 1000
+	shape_def.density = 1 //000
 	shape_def.material.friction = 0.3
 	shape_def.enableContactEvents = true
 	shape_def.enableHitEvents = true
@@ -509,7 +642,7 @@ create_bullet :: proc(position: Vec2, velocity: Vec2) -> Entity {
 	b2.Body_SetLinearVelocity(body_id, k2_position_to_b2_position(velocity))
 
 	shape_def := b2.DefaultShapeDef()
-	shape_def.density = 1000
+	shape_def.density = 1 //000
 	shape_def.material.friction = 0.3
 	shape_def.enableContactEvents = true
 	shape_def.enableHitEvents = true
@@ -525,12 +658,14 @@ create_player :: proc(position: Vec2) -> Entity {
 	body_def := b2.DefaultBodyDef()
 	body_def.type = .dynamicBody
 	body_def.position = k2_position_to_b2_position(position)
-	body_def.angularDamping = 0.8
+	body_def.isBullet = true
+	body_def.angularDamping = 0.99
+	body_def.linearDamping = 0.3
 	body_id := b2.CreateBody(world_id, body_def)
 
 	shape_def := b2.DefaultShapeDef()
-	shape_def.density = 10000
-	shape_def.material.friction = 0.3
+	shape_def.density = 1
+	shape_def.material.friction = 0.1
 	shape_def.enableContactEvents = true
 	shape_def.enableHitEvents = true
 
@@ -543,6 +678,20 @@ create_player :: proc(position: Vec2) -> Entity {
 		maxHealth = PLAYER_MAX_HEALTH,
 		currentHealth = PLAYER_MAX_HEALTH,
 	}
+}
+
+create_blocking_volume :: proc(position: Vec2, size: Vec2) {
+	body_def := b2.DefaultBodyDef()
+	body_def.type = .staticBody
+	body_def.position = k2_position_to_b2_position(position)
+	body_id := b2.CreateBody(world_id, body_def)
+
+	shape_def := b2.DefaultShapeDef()
+	shape_def.material.friction = 0.1
+
+	size_b2 := size / PIXELS_PER_METER
+	box := b2.MakeBox(size_b2.x / 2, size_b2.y / 2)
+	_ = b2.CreatePolygonShape(body_id, shape_def, box)
 }
 
 destroy_entity :: proc(entity_ptr: ^Entity) {
@@ -584,11 +733,11 @@ DamagePlayer :: proc(damage: f32) {
 }
 
 k2_position_to_b2_position :: proc(position: Vec2) -> b2.Vec2 {
-	return b2.Vec2{position.x, -position.y}
+	return b2.Vec2{position.x, -position.y} / PIXELS_PER_METER
 }
 
 b2_position_to_k2_position :: proc(position: b2.Vec2) -> b2.Vec2 {
-	return Vec2{position.x, -position.y}
+	return Vec2{position.x, -position.y} * PIXELS_PER_METER
 }
 
 GameState :: struct {
@@ -597,12 +746,15 @@ GameState :: struct {
 	last_enemy_spawn_time: f64,
 	player_foward_force:   f32,
 	player_torque:         f32,
+	gameStartTime:         f64,
 }
 
 Entity_Type :: enum {
 	Player,
 	Enemy,
 	Bullet,
+	CrateAmmo,
+	CreateHealth,
 }
 
 Entity :: struct {
