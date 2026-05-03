@@ -1,6 +1,6 @@
 package Game
 
-import k2 "../karl2d"
+import k2 "karl2d"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
@@ -125,17 +125,17 @@ init :: proc() {
 }
 
 LoadTextures :: proc() {
-	textures.crosshair = k2.load_texture_from_bytes(#load("../assets/crosshair.png"))
-	textures.car = k2.load_texture_from_bytes(#load("../assets/Car_1_Gray.png"))
-	textures.bullet = k2.load_texture_from_bytes(#load("../assets/Pistol-Bullet.png"))
-	textures.jeep = k2.load_texture_from_bytes(#load("../assets/Jeep.png"))
-	textures.crate_ammo = k2.load_texture_from_bytes(#load("../assets/crateWood.png"))
-	textures.crate_health = k2.load_texture_from_bytes(#load("../assets/crateWood_Health.png"))
+	textures.crosshair = k2.load_texture_from_bytes(#load("assets/crosshair.png"))
+	textures.car = k2.load_texture_from_bytes(#load("assets/Car_1_Gray.png"))
+	textures.bullet = k2.load_texture_from_bytes(#load("assets/Pistol-Bullet.png"))
+	textures.jeep = k2.load_texture_from_bytes(#load("assets/Jeep.png"))
+	textures.crate_ammo = k2.load_texture_from_bytes(#load("assets/crateWood.png"))
+	textures.crate_health = k2.load_texture_from_bytes(#load("assets/crateWood_Health.png"))
 }
 
 LoadSounds :: proc() {
-	sounds.buffShoot_1 = k2.load_audio_buffer_from_bytes(#load("../assets/laserShoot_1.wav"))
-	sounds.buffShoot_2 = k2.load_audio_buffer_from_bytes(#load("../assets/laserShoot_2.wav"))
+	sounds.buffShoot_1 = k2.load_audio_buffer_from_bytes(#load("assets/laserShoot_1.wav"))
+	sounds.buffShoot_2 = k2.load_audio_buffer_from_bytes(#load("assets/laserShoot_2.wav"))
 
 	sounds.Shoot_1 = k2.create_sound_from_audio_buffer(sounds.buffShoot_1)
 	sounds.Shoot_2 = k2.create_sound_from_audio_buffer(sounds.buffShoot_2)
